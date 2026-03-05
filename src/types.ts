@@ -24,6 +24,12 @@ export interface Sale {
   payment_method: string;
 }
 
+export interface PaymentMethod {
+  id: number;
+  name: string;
+  is_active: number;
+}
+
 export interface DayEndReport {
   summary: {
     transaction_count: number;
@@ -33,6 +39,10 @@ export interface DayEndReport {
   items: {
     name: string;
     total_quantity: number;
+    total_revenue: number;
+  }[];
+  categories: {
+    name: string;
     total_revenue: number;
   }[];
 }

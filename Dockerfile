@@ -1,37 +1,33 @@
-# Use Node.js for building and running
-FROM node:20-slim AS builder
+FROM node:22-alpine
 
 WORKDIR /app
+
+# Install build dependencies for native modules (better-sqlite3)
+RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (including devDependencies for tsx and build tools)
 RUN npm install
 
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the frontend
 RUN npm run build
 
-# Production stage
-FROM node:20-slim
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=4000
+ENV DATABASE_PATH=/data/pos.db
 
-WORKDIR /app
+# Create data directory for persistent storage
+RUN mkdir -p /data
+VOLUME /data
 
-# Copy built assets and server code
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/server.ts ./
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/tsconfig.json ./
+# Expose the port
+EXPOSE 4000
 
-# Install production dependencies only
-RUN npm install --production
-RUN npm install -g tsx
-
-# Expose the port (internally 3000, mapped to 40000 in compose)
-EXPOSE 3000
-
-# Start the server
-CMD ["tsx", "server.ts"]
+# Start the application
+CMD ["npm", "start"]

@@ -74,13 +74,13 @@
 /* 80mm Thermal Receipt Styles */
 .receipt-80mm {
   width: 80mm;
-  padding: 5mm;
+  padding: 2mm;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.2;
   color: black;
   background: white;
-  margin: 0 auto;
+  margin: 0;
 }
 
 /* Report Print Styles */
