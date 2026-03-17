@@ -13,7 +13,9 @@ import {
   Settings,
   LogOut,
   History,
-  Tag
+  Tag,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod } from './types';
@@ -59,6 +61,41 @@ const PrintStyles = () => (
 
 // --- Components ---
 
+const ThemeToggle = () => {
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const isDarkMode = document.documentElement.classList.contains('dark') || 
+      (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    setIsDark(isDarkMode);
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    if (isDark) {
+      document.documentElement.classList.remove('dark');
+      localStorage.theme = 'light';
+      setIsDark(false);
+    } else {
+      document.documentElement.classList.add('dark');
+      localStorage.theme = 'dark';
+      setIsDark(true);
+    }
+  };
+
+  return (
+    <button 
+      onClick={toggleTheme}
+      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all mb-2"
+    >
+      {isDark ? <Sun size={20} /> : <Moon size={20} />}
+      {isDark ? 'Light Mode' : 'Dark Mode'}
+    </button>
+  );
+};
+
 const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab: string, setActiveTab: (tab: string) => void, onLogout: () => void, currentUser: { username: string, role: string } | null }) => {
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
@@ -71,15 +108,15 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab
   }
 
   return (
-    <div className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen no-print">
-      <div className="p-6 border-bottom border-slate-100">
+    <div className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col h-screen no-print">
+      <div className="p-6 border-bottom border-slate-100 dark:border-slate-700">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
             <LayoutDashboard size={24} />
           </div>
           <div>
-            <h1 className="font-bold text-slate-900 tracking-tight">Modern POS</h1>
-            <p className="text-xs text-slate-500 font-medium">Store Management</p>
+            <h1 className="font-bold text-slate-900 dark:text-white tracking-tight">Modern POS</h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Store Management</p>
           </div>
         </div>
       </div>
@@ -91,8 +128,8 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab
             onClick={() => setActiveTab(item.id)}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
               activeTab === item.id 
-                ? 'bg-indigo-50 text-indigo-600 font-semibold' 
-                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 font-semibold' 
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <item.icon size={20} />
@@ -101,10 +138,11 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab
         ))}
       </nav>
 
-      <div className="p-4 border-t border-slate-100">
+      <div className="p-4 border-t border-slate-100 dark:border-slate-700">
+        <ThemeToggle />
         <button 
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 hover:bg-red-50 hover:text-red-600 transition-all"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all"
         >
           <LogOut size={20} />
           Logout
@@ -120,7 +158,7 @@ const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], sett
   const taxRate = parseFloat(settings.tax_rate) || 0;
   
   return (
-    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white p-2">
+    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
       <div className="text-center mb-2">
         <h2 className="text-lg font-bold uppercase">{settings.company_name || 'MODERN STORE'}</h2>
         <p>{settings.address || '123 Business Street, City'}</p>
@@ -191,7 +229,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
   const totalTransactions = report.summary.reduce((a, b) => a + b.transaction_count, 0);
 
   return (
-    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white p-2">
+    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
       <div className="text-center mb-4">
         <h2 className="text-lg font-bold uppercase">{settings.company_name}</h2>
         <p>{settings.address}</p>
@@ -323,8 +361,8 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
     >
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold text-slate-900">Settings</h2>
-          <p className="text-slate-500">Manage company details and tax configuration</p>
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Settings</h2>
+          <p className="text-slate-500 dark:text-slate-400">Manage company details and tax configuration</p>
         </div>
       </div>
 
@@ -332,7 +370,7 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Company Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Company Name</label>
               <input 
                 type="text" 
                 name="company_name"
@@ -342,7 +380,7 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Tax Rate (%)</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Tax Rate (%)</label>
               <input 
                 type="number" 
                 name="tax_rate"
@@ -353,7 +391,7 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Address</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Address</label>
               <input 
                 type="text" 
                 name="address"
@@ -363,7 +401,7 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Contact Number</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Contact Number</label>
               <input 
                 type="text" 
                 name="contact"
@@ -541,8 +579,8 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
     >
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold text-slate-900">Admin Panel</h2>
-          <p className="text-slate-500">Manage system users and settings</p>
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Admin Panel</h2>
+          <p className="text-slate-500 dark:text-slate-400">Manage system users and settings</p>
         </div>
       </div>
 
@@ -551,7 +589,7 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
           <h3 className="text-lg font-bold mb-6">Create New User</h3>
           <form onSubmit={handleCreateUser} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Username</label>
               <input 
                 type="text" 
                 className="input w-full" 
@@ -561,7 +599,7 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Password</label>
               <input 
                 type="password" 
                 className="input w-full" 
@@ -571,7 +609,7 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Role</label>
               <select 
                 className="input w-full" 
                 value={role}
@@ -593,10 +631,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
           <h3 className="text-lg font-bold mb-6">Existing Users</h3>
           <div className="space-y-4">
             {users.map(user => (
-              <div key={user.id} className="p-4 bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-between">
+              <div key={user.id} className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-700 flex items-center justify-between">
                 <div>
-                  <div className="font-bold text-slate-900">{user.username}</div>
-                  <div className="text-xs text-slate-500 uppercase">{user.role}</div>
+                  <div className="font-bold text-slate-900 dark:text-white">{user.username}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 uppercase">{user.role}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button 
@@ -617,14 +655,14 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
                 </div>
               </div>
             ))}
-            {users.length === 0 && <p className="text-slate-500 text-center py-4">No users found.</p>}
+            {users.length === 0 && <p className="text-slate-500 dark:text-slate-400 text-center py-4">No users found.</p>}
           </div>
         </div>
       </div>
 
       {/* Payment Methods Section */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-8 mt-8">
-        <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+      <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm dark:shadow-none border border-slate-200 dark:border-slate-700 p-8 mt-8">
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
           <Settings size={24} className="text-indigo-600" />
           Payment Methods
         </h2>
@@ -653,11 +691,11 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {paymentMethods.map((method) => (
-            <div key={method.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+            <div key={method.id} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-700">
               <span className="font-medium capitalize">{method.name}</span>
               <button 
                 onClick={() => handleDeletePaymentMethod(method.id)}
-                className="text-slate-400 hover:text-red-500 transition-colors p-2"
+                className="text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors p-2"
                 title="Delete"
               >
                 <Trash2 size={18} />
@@ -668,10 +706,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
       </div>
 
       {userToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black\/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl dark:shadow-none p-6 max-w-sm w-full">
             <h3 className="text-lg font-bold mb-4 text-red-600">Delete User?</h3>
-            <p className="text-sm text-slate-500 mb-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
               Are you sure you want to delete this user? This action cannot be undone.
             </p>
             <div className="flex gap-3">
@@ -693,10 +731,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
       )}
 
       {editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black\/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl dark:shadow-none p-6 max-w-sm w-full">
             <h3 className="text-lg font-bold mb-4">Change Password</h3>
-            <p className="text-sm text-slate-500 mb-4">Enter new password for user.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Enter new password for user.</p>
             <input 
               type="password" 
               className="input w-full mb-4" 
@@ -759,10 +797,10 @@ const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl dark:shadow-none overflow-hidden">
         <div className="bg-indigo-600 p-8 text-center">
-          <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
+          <div className="w-16 h-16 bg-white dark:bg-slate-800/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
             <LayoutDashboard size={32} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">Modern POS</h1>
@@ -772,28 +810,28 @@ const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
         <div className="p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                 Username
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
                 placeholder="Enter username"
                 autoFocus
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                 Password
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
                 placeholder="Enter password"
               />
             </div>
@@ -814,7 +852,7 @@ const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
             </button>
           </form>
           
-          <div className="mt-6 text-center text-xs text-slate-400">
+          <div className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
             Protected System • Authorized Personnel Only
           </div>
         </div>
@@ -1137,7 +1175,7 @@ export default function App() {
   return (
     <>
       <PrintStyles />
-      <div className="h-screen overflow-hidden bg-slate-50 main-container no-print">
+      <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-900 main-container no-print">
         <div className="flex w-full h-full">
           <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} currentUser={currentUser} />
 
@@ -1161,7 +1199,7 @@ export default function App() {
               <div className="flex-1 p-6 flex flex-col gap-6 overflow-hidden">
                 <div className="flex gap-4 items-center">
                   <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={18} />
                     <input 
                       type="text" 
                       placeholder="Search items or scan SKU..." 
@@ -1174,7 +1212,7 @@ export default function App() {
                     <button 
                       onClick={() => setSelectedCategory(null)}
                       className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-all ${
-                        selectedCategory === null ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                        selectedCategory === null ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                       }`}
                     >
                       All
@@ -1184,7 +1222,7 @@ export default function App() {
                         key={cat.id}
                         onClick={() => setSelectedCategory(cat.id)}
                         className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-all ${
-                          selectedCategory === cat.id ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                          selectedCategory === cat.id ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                         }`}
                       >
                         {cat.name}
@@ -1200,11 +1238,11 @@ export default function App() {
                       onClick={() => addToCart(item)}
                       className="card p-4 text-left hover:border-indigo-500 hover:shadow-md transition-all group"
                     >
-                      <div className="w-full aspect-square bg-slate-100 rounded-lg mb-3 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-all">
+                      <div className="w-full aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg mb-3 flex items-center justify-center text-slate-400 dark:text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-all">
                         <Tag size={32} />
                       </div>
-                      <h3 className="font-bold text-slate-900 truncate">{item.name}</h3>
-                      <p className="text-xs text-slate-500 mb-2">{item.category_name || 'No Category'}</p>
+                      <h3 className="font-bold text-slate-900 dark:text-white truncate">{item.name}</h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">{item.category_name || 'No Category'}</p>
                       <div className="flex items-center justify-between">
                         <span className="text-indigo-600 font-bold">₱{item.price.toFixed(2)}</span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${item.stock > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
@@ -1217,8 +1255,8 @@ export default function App() {
               </div>
 
               {/* Cart Sidebar */}
-              <div className="w-96 bg-white border-l border-slate-200 flex flex-col shadow-2xl">
-                <div className="p-6 border-b border-slate-100">
+              <div className="w-96 bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col shadow-2xl dark:shadow-none">
+                <div className="p-6 border-b border-slate-100 dark:border-slate-700">
                   <h2 className="text-xl font-bold flex items-center gap-2">
                     <ShoppingCart size={24} className="text-indigo-600" />
                     Current Order
@@ -1227,29 +1265,29 @@ export default function App() {
 
                 <div className="flex-1 overflow-auto p-4 space-y-4">
                   {cart.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-4">
-                      <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center">
+                    <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-4">
+                      <div className="w-16 h-16 bg-slate-50 dark:bg-slate-900 rounded-full flex items-center justify-center">
                         <ShoppingCart size={32} />
                       </div>
                       <p className="font-medium">Your cart is empty</p>
                     </div>
                   ) : (
                     cart.map(item => (
-                      <div key={item.id} className="flex gap-3 items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <div key={item.id} className="flex gap-3 items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700">
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-slate-900 truncate">{item.name}</h4>
+                          <h4 className="font-bold text-slate-900 dark:text-white truncate">{item.name}</h4>
                           <p className="text-sm text-indigo-600 font-medium">₱{item.price.toFixed(2)}</p>
                         </div>
-                        <div className="flex items-center gap-2 bg-white rounded-lg border border-slate-200 p-1">
-                          <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-slate-50 rounded text-slate-500">
+                        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-1">
+                          <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-slate-50 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400">
                             <Minus size={14} />
                           </button>
                           <span className="w-6 text-center font-bold text-sm">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-slate-50 rounded text-slate-500">
+                          <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-slate-50 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400">
                             <Plus size={14} />
                           </button>
                         </div>
-                        <button onClick={() => removeFromCart(item.id)} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
+                        <button onClick={() => removeFromCart(item.id)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors">
                           <Trash2 size={18} />
                         </button>
                       </div>
@@ -1257,17 +1295,17 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="p-6 bg-slate-50 border-t border-slate-200 space-y-4">
+                <div className="p-6 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 space-y-4">
                   <div className="space-y-2">
-                    <div className="flex justify-between text-slate-500">
+                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
                       <span>Subtotal</span>
                       <span>₱{cartSubtotal.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between text-slate-500">
+                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
                       <span>VAT ({settings.tax_rate}%)</span>
                       <span>₱{cartTax.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between text-2xl font-bold text-slate-900 pt-2 border-t border-slate-200">
+                    <div className="flex justify-between text-2xl font-bold text-slate-900 dark:text-white pt-2 border-t border-slate-200 dark:border-slate-700">
                       <span>Total</span>
                       <span>₱{cartTotal.toFixed(2)}</span>
                     </div>
@@ -1305,8 +1343,8 @@ export default function App() {
             >
               <div className="flex justify-between items-end">
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900">Inventory Management</h2>
-                  <p className="text-slate-500">Manage your products and categories</p>
+                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Inventory Management</h2>
+                  <p className="text-slate-500 dark:text-slate-400">Manage your products and categories</p>
                 </div>
               </div>
 
@@ -1320,7 +1358,7 @@ export default function App() {
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="col-span-2">
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Item Name</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Item Name</label>
                         <input 
                           type="text" 
                           className="input" 
@@ -1330,7 +1368,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Price ($)</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Price ($)</label>
                         <input 
                           type="number" 
                           className="input" 
@@ -1340,7 +1378,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Category</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Category</label>
                         <select 
                           className="input"
                           value={newItem.category_id}
@@ -1353,7 +1391,7 @@ export default function App() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">SKU / Barcode</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">SKU / Barcode</label>
                         <input 
                           type="text" 
                           className="input" 
@@ -1363,7 +1401,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Initial Stock</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Initial Stock</label>
                         <input 
                           type="number" 
                           className="input" 
@@ -1378,22 +1416,22 @@ export default function App() {
 
                   <div className="card overflow-hidden">
                     <table className="w-full text-left">
-                      <thead className="bg-slate-50 border-b border-slate-200">
+                      <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                         <tr>
-                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Item</th>
-                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Category</th>
-                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Price</th>
-                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase text-right">Stock</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Item</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Category</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Price</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase text-right">Stock</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {items.map(item => (
-                          <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                             <td className="px-6 py-4">
-                              <div className="font-bold text-slate-900">{item.name}</div>
-                              <div className="text-xs text-slate-400 font-mono">{item.sku || 'No SKU'}</div>
+                              <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
+                              <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">{item.sku || 'No SKU'}</div>
                             </td>
-                            <td className="px-6 py-4 text-slate-600">{item.category_name || '-'}</td>
+                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{item.category_name || '-'}</td>
                             <td className="px-6 py-4 font-medium text-indigo-600">₱{item.price.toFixed(2)}</td>
                             <td className="px-6 py-4 text-right">
                               <span className={`px-2 py-1 rounded-full text-xs font-bold ${
@@ -1418,7 +1456,7 @@ export default function App() {
                     </h3>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Category Name</label>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Category Name</label>
                         <input 
                           type="text" 
                           className="input" 
@@ -1435,9 +1473,9 @@ export default function App() {
                     <h3 className="text-lg font-bold mb-4">All Categories</h3>
                     <div className="space-y-2">
                       {categories.map(cat => (
-                        <div key={cat.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                          <span className="font-medium text-slate-700">{cat.name}</span>
-                          <span className="text-xs bg-white px-2 py-1 rounded border border-slate-200 text-slate-400">
+                        <div key={cat.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700">
+                          <span className="font-medium text-slate-700 dark:text-slate-200">{cat.name}</span>
+                          <span className="text-xs bg-white dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500">
                             {items.filter(i => i.category_id === cat.id).length} items
                           </span>
                         </div>
@@ -1459,12 +1497,12 @@ export default function App() {
             >
               <div className="flex justify-between items-end">
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900">Sales & Reports</h2>
-                  <p className="text-slate-500">Track your business performance</p>
+                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Sales & Reports</h2>
+                  <p className="text-slate-500 dark:text-slate-400">Track your business performance</p>
                 </div>
                 <div className="flex gap-4 items-end">
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Type</label>
+                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Type</label>
                     <select 
                       className="input py-2 px-4"
                       value={reportType}
@@ -1476,7 +1514,7 @@ export default function App() {
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Date</label>
+                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Date</label>
                     <input 
                       type={reportType === 'day' ? 'date' : reportType === 'month' ? 'month' : 'number'} 
                       className="input py-2 px-4"
@@ -1500,7 +1538,7 @@ export default function App() {
 
               {/* Day End Summary */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="card p-6 bg-indigo-600 text-white border-none shadow-xl shadow-indigo-100">
+                <div className="card p-6 bg-indigo-600 text-white border-none shadow-xl dark:shadow-none shadow-indigo-100">
                   <p className="text-indigo-100 text-sm font-bold uppercase tracking-wider mb-1">
                     {reportType === 'day' ? "Today's" : reportType === 'month' ? "This Month's" : "This Year's"} Total Sales
                   </p>
@@ -1515,9 +1553,9 @@ export default function App() {
 
                 {dayEndReport?.summary.map(s => (
                   <div key={s.payment_method} className="card p-6">
-                    <p className="text-slate-500 text-sm font-bold uppercase tracking-wider mb-1">{s.payment_method} Sales</p>
-                    <h3 className="text-3xl font-bold text-slate-900">₱{s.total_sales.toFixed(2)}</h3>
-                    <p className="text-slate-400 text-sm mt-2">{s.transaction_count} Transactions</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-bold uppercase tracking-wider mb-1">{s.payment_method} Sales</p>
+                    <h3 className="text-3xl font-bold text-slate-900 dark:text-white">₱{s.total_sales.toFixed(2)}</h3>
+                    <p className="text-slate-400 dark:text-slate-500 text-sm mt-2">{s.transaction_count} Transactions</p>
                   </div>
                 ))}
               </div>
@@ -1525,29 +1563,29 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Top Selling Items */}
                 <div className="card">
-                  <div className="p-6 border-b border-slate-100">
+                  <div className="p-6 border-b border-slate-100 dark:border-slate-700">
                     <h3 className="text-lg font-bold">Top Selling Items ({reportType})</h3>
                   </div>
                   <div className="overflow-hidden">
                     <table className="w-full text-left">
-                      <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
+                      <thead className="bg-slate-50 dark:bg-slate-900 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">
                         <tr>
                           <th className="px-6 py-3">Item</th>
                           <th className="px-6 py-3 text-center">Qty</th>
                           <th className="px-6 py-3 text-right">Revenue</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {dayEndReport?.items.map((item, idx) => (
                           <tr key={idx}>
-                            <td className="px-6 py-4 font-medium text-slate-900">{item.name}</td>
-                            <td className="px-6 py-4 text-center text-slate-600">{item.total_quantity}</td>
+                            <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{item.name}</td>
+                            <td className="px-6 py-4 text-center text-slate-600 dark:text-slate-300">{item.total_quantity}</td>
                             <td className="px-6 py-4 text-right font-bold text-indigo-600">₱{item.total_revenue.toFixed(2)}</td>
                           </tr>
                         ))}
                         {(!dayEndReport?.items || dayEndReport.items.length === 0) && (
                           <tr>
-                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400">No sales recorded today</td>
+                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">No sales recorded today</td>
                           </tr>
                         )}
                       </tbody>
@@ -1557,30 +1595,30 @@ export default function App() {
 
                 {/* Recent Transactions */}
                 <div className="card">
-                  <div className="p-6 border-b border-slate-100">
+                  <div className="p-6 border-b border-slate-100 dark:border-slate-700">
                     <h3 className="text-lg font-bold">Recent Transactions</h3>
                   </div>
                   <div className="overflow-hidden">
                     <table className="w-full text-left">
-                      <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
+                      <thead className="bg-slate-50 dark:bg-slate-900 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">
                         <tr>
                           <th className="px-6 py-3">Time</th>
                           <th className="px-6 py-3">Method</th>
                           <th className="px-6 py-3 text-right">Total</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {salesHistory.slice(0, 10).map(sale => (
                           <tr key={sale.id}>
-                            <td className="px-6 py-4 text-slate-600">
+                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
                               {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </td>
                             <td className="px-6 py-4">
-                              <span className="uppercase text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-600">
+                              <span className="uppercase text-[10px] font-bold px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                                 {sale.payment_method}
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-right font-bold text-slate-900">₱{sale.total.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-900 dark:text-white">₱{sale.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1596,21 +1634,21 @@ export default function App() {
       {/* Receipt Modal */}
       <AnimatePresence>
         {showReceipt && lastSale && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black\/50 backdrop-blur-sm no-print">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl dark:shadow-none max-w-md w-full overflow-hidden"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+              <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
                 <h3 className="text-xl font-bold">Sale Successful</h3>
-                <button onClick={() => setShowReceipt(false)} className="text-slate-400 hover:text-slate-600">
+                <button onClick={() => setShowReceipt(false)} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
                   <ChevronRight size={24} />
                 </button>
               </div>
-              <div className="p-8 bg-slate-50 flex justify-center">
-                <div id="thermal-receipt" className="bg-white shadow-lg">
+              <div className="p-8 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                <div id="thermal-receipt" className="bg-white dark:bg-slate-800 shadow-lg">
                    <Receipt sale={lastSale} items={lastSale.items} settings={settings} />
                 </div>
               </div>
