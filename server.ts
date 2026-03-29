@@ -458,7 +458,7 @@ async function startServer() {
 
   // Sales
   app.post("/api/sales", (req, res) => {
-    const { items: saleItems, subtotal, tax, total, payment_method, discount } = req.body;
+    const { items: saleItems, subtotal, tax, total, payment_method, discount, timestamp } = req.body;
     
     if (!saleItems || !Array.isArray(saleItems) || saleItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
@@ -469,8 +469,14 @@ async function startServer() {
     }
     
     const transaction = db.transaction(() => {
-      const saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount) VALUES (?, ?, ?, ?, ?)")
-        .run(subtotal, tax, total, payment_method, discount || 0);
+      let saleInfo;
+      if (timestamp) {
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0, timestamp);
+      } else {
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount) VALUES (?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0);
+      }
       const saleId = Number(saleInfo.lastInsertRowid);
       logEdit('sales', saleId, 'CREATE', `Sale ${saleId} created with total ${total}`, getUsername(req));
 

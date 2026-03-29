@@ -17,7 +17,10 @@ import {
   Sun,
   Moon,
   ShieldAlert,
-  Download
+  Download,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod } from './types';
@@ -224,7 +227,16 @@ const ThemeToggle = () => {
   );
 };
 
-const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings }: { activeTab: string, setActiveTab: (tab: string) => void, onLogout: () => void, currentUser: { username: string, role: string } | null, settings: Settings }) => {
+const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isOnline, pendingSalesCount, isSyncing }: { 
+  activeTab: string, 
+  setActiveTab: (tab: string) => void, 
+  onLogout: () => void, 
+  currentUser: { username: string, role: string } | null, 
+  settings: Settings,
+  isOnline: boolean,
+  pendingSalesCount: number,
+  isSyncing: boolean
+}) => {
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
     { id: 'inventory', icon: Package, label: 'Inventory' },
@@ -271,7 +283,33 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings }: {
         ))}
       </nav>
 
-      <div className="p-4 border-t border-slate-100 dark:border-slate-700">
+      <div className="p-4 border-t border-slate-100 dark:border-slate-700 space-y-4">
+        <div className="flex items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            {isOnline ? (
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <Wifi size={16} />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Online</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <WifiOff size={16} />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Offline</span>
+              </div>
+            )}
+          </div>
+          {pendingSalesCount > 0 && (
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-lg">
+              {isSyncing ? (
+                <RefreshCw size={12} className="animate-spin" />
+              ) : (
+                <div className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+              )}
+              <span className="text-[10px] font-bold">{pendingSalesCount} Pending</span>
+            </div>
+          )}
+        </div>
+        
         <ThemeToggle />
         <button 
           onClick={onLogout}
@@ -1200,6 +1238,80 @@ export default function App() {
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
 
+  // Offline State
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingSales, setPendingSales] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('pendingSales');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('pendingSales', JSON.stringify(pendingSales));
+  }, [pendingSales]);
+
+  useEffect(() => {
+    if (isOnline && pendingSales.length > 0 && !isSyncing) {
+      syncPendingSales();
+    }
+  }, [isOnline, pendingSales.length, isSyncing]);
+
+  const syncPendingSales = async () => {
+    setIsSyncing(true);
+    const salesToSync = [...pendingSales];
+    console.log(`Syncing ${salesToSync.length} pending sales...`);
+    
+    for (const sale of salesToSync) {
+      try {
+        const res = await fetch('/api/sales', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Username': sale.username
+          },
+          body: JSON.stringify({
+            items: sale.items,
+            subtotal: sale.subtotal,
+            tax: sale.tax,
+            total: sale.total,
+            payment_method: sale.payment_method,
+            discount: sale.discount,
+            timestamp: sale.timestamp
+          })
+        });
+        
+        if (res.ok) {
+          setPendingSales(prev => prev.filter(s => s.offlineId !== sale.offlineId));
+        } else {
+          console.error('Failed to sync sale:', await res.text());
+          break; // Stop on error
+        }
+      } catch (err) {
+        console.error('Error syncing sale:', err);
+        break;
+      }
+    }
+    setIsSyncing(false);
+    if (isAuthenticated) fetchItems();
+  };
+
   useEffect(() => {
     fetchSettings();
     if (isAuthenticated) {
@@ -1347,6 +1459,53 @@ export default function App() {
 
     const discountValue = parseFloat(discount) || 0;
     const finalTotal = Math.max(0, cartTotal - discountValue);
+
+    // Handle Offline Mode
+    if (!isOnline) {
+      const offlineId = Date.now();
+      const offlineSale = {
+        offlineId,
+        items: cart,
+        subtotal: cartSubtotal,
+        tax: cartTax,
+        total: finalTotal,
+        payment_method: paymentMethod,
+        discount: discountValue,
+        timestamp: new Date().toISOString(),
+        username: currentUser?.username || 'System'
+      };
+
+      setPendingSales(prev => [...prev, offlineSale]);
+      
+      // Update local stock immediately for offline feedback
+      setItems(prevItems => {
+        const newItems = [...prevItems];
+        cart.forEach(cartItem => {
+          const itemIndex = newItems.findIndex(i => i.id === cartItem.id);
+          if (itemIndex > -1) {
+            newItems[itemIndex] = {
+              ...newItems[itemIndex],
+              stock: newItems[itemIndex].stock - cartItem.quantity
+            };
+          }
+        });
+        return newItems;
+      });
+
+      setLastSale({ 
+        id: offlineId, 
+        subtotal: cartSubtotal, 
+        tax: cartTax, 
+        total: finalTotal, 
+        payment_method: paymentMethod,
+        items: [...cart],
+        discount: discountValue
+      });
+      setShowReceipt(true);
+      setCart([]);
+      setDiscount('');
+      return;
+    }
 
     try {
       const res = await fetch('/api/sales', {
@@ -1604,7 +1763,16 @@ export default function App() {
       <PrintStyles />
       <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-900 main-container no-print">
         <div className="flex w-full h-full">
-          <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} currentUser={currentUser} settings={settings} />
+          <Sidebar 
+            activeTab={activeTab} 
+            setActiveTab={setActiveTab} 
+            onLogout={handleLogout} 
+            currentUser={currentUser} 
+            settings={settings}
+            isOnline={isOnline}
+            pendingSalesCount={pendingSales.length}
+            isSyncing={isSyncing}
+          />
 
         <main className="flex-1 overflow-auto relative">
           <AnimatePresence mode="wait">
