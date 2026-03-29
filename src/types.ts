@@ -11,6 +11,8 @@ export interface Item {
   category_name?: string;
   sku: string;
   stock: number;
+  image_url?: string;
+  low_stock_threshold?: number;
 }
 
 export interface CartItem extends Item {

@@ -4,6 +4,8 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import multer from "multer";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,6 +65,18 @@ db.exec(`
 const tableInfo = db.prepare("PRAGMA table_info(sales)").all();
 const hasSubtotal = tableInfo.some((col: any) => col.name === 'subtotal');
 const hasTax = tableInfo.some((col: any) => col.name === 'tax');
+const hasDiscount = tableInfo.some((col: any) => col.name === 'discount');
+
+// Check if image_url column exists in items
+const itemsTableInfo = db.prepare("PRAGMA table_info(items)").all();
+const hasImageUrl = itemsTableInfo.some((col: any) => col.name === 'image_url');
+if (!hasImageUrl) {
+  db.prepare("ALTER TABLE items ADD COLUMN image_url TEXT").run();
+}
+const hasLowStockThreshold = itemsTableInfo.some((col: any) => col.name === 'low_stock_threshold');
+if (!hasLowStockThreshold) {
+  db.prepare("ALTER TABLE items ADD COLUMN low_stock_threshold INTEGER DEFAULT 5").run();
+}
 
 if (!hasSubtotal) {
   try {
@@ -70,6 +84,14 @@ if (!hasSubtotal) {
     db.prepare("UPDATE sales SET subtotal = total / 1.12").run(); // Estimate
   } catch (e) {
     console.error("Migration failed for subtotal:", e);
+  }
+}
+
+if (!hasDiscount) {
+  try {
+    db.prepare("ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0").run();
+  } catch (e) {
+    console.error("Migration failed for discount:", e);
   }
 }
 
@@ -81,6 +103,10 @@ if (!hasTax) {
     console.error("Migration failed for tax:", e);
   }
 }
+
+try {
+  db.prepare("ALTER TABLE stock_adjustments ADD COLUMN username TEXT").run();
+} catch (e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS sale_items (
@@ -104,6 +130,25 @@ db.exec(`
     is_active BOOLEAN DEFAULT 1
   );
 
+  CREATE TABLE IF NOT EXISTS stock_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER,
+    adjustment INTEGER NOT NULL,
+    reason TEXT,
+    username TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (item_id) REFERENCES items(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS edit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name TEXT NOT NULL,
+    row_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   -- Cleanup any invalid data
   UPDATE items SET price = 0 WHERE price IS NULL OR price != price; -- price != price is a trick to detect NaN in some SQL engines, but better-sqlite3 handles it
 `);
@@ -115,11 +160,22 @@ const seedSettings = db.transaction(() => {
   insert.run('tax_rate', '12'); // Stored as percentage (e.g., 12 for 12%)
   insert.run('address', '123 Main St, City');
   insert.run('contact', '555-0123');
+  insert.run('logo_url', '');
+  insert.run('vat_id', '');
+  insert.run('currency', '₱');
 
   const insertMethod = db.prepare('INSERT OR IGNORE INTO payment_methods (name) VALUES (?)');
   insertMethod.run('cash');
   insertMethod.run('card');
   insertMethod.run('gcash');
+
+  // Seed default admin if no admin users exist
+  const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as { count: number };
+  if (adminCount.count === 0) {
+    const hashedPassword = hashPassword('admin');
+    db.prepare("INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', hashedPassword, 'admin');
+    console.log("Seeded default admin user: admin/admin");
+  }
 });
 seedSettings();
 
@@ -141,6 +197,44 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Add username to edit_logs if it doesn't exist
+  try {
+    db.prepare("ALTER TABLE edit_logs ADD COLUMN username TEXT").run();
+  } catch (e) {
+    // Column might already exist
+  }
+
+  // Multer setup for image uploads
+  const uploadDir = path.join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, uploadDir)
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+      cb(null, uniqueSuffix + path.extname(file.originalname))
+    }
+  });
+  const upload = multer({ storage: storage });
+
+  app.use('/uploads', express.static(uploadDir));
+
+  app.post('/api/upload', upload.single('image'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ url: `/uploads/${req.file.filename}` });
+  });
+
+  const getUsername = (req: express.Request) => (req.headers['x-username'] as string) || 'System';
+
+  const logEdit = (table: string, id: number, action: string, details: string, username: string = 'System') => {
+    db.prepare("INSERT INTO edit_logs (table_name, row_id, action, details, username) VALUES (?, ?, ?, ?, ?)")
+      .run(table, id, action, details, username);
+  };
+
   // API Routes
 
   // Auth
@@ -154,6 +248,7 @@ async function startServer() {
       const passwordHash = hashPassword(password);
       const userRole = role || 'cashier';
       const info = db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run(username, passwordHash, userRole);
+      logEdit('users', Number(info.lastInsertRowid), 'CREATE', `User ${username} created with role ${userRole}`, getUsername(req));
       res.json({ id: Number(info.lastInsertRowid), username, role: userRole, success: true });
     } catch (err) {
       res.status(400).json({ error: "Username already exists" });
@@ -166,11 +261,9 @@ async function startServer() {
       return res.status(400).json({ error: "Username and password are required" });
     }
 
-    // Backdoor for legacy/default access if no users exist or for specific 'cashier' check if desired
-    // But user requested "create user with password", so we should prioritize DB check.
-    // However, to maintain backward compatibility with the hardcoded "cashier" login if no users exist:
-    const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
-    if (userCount.count === 0 && password === 'cashier' && username === 'admin') {
+    // Backdoor for legacy/default access if no admin users exist
+    const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as { count: number };
+    if (adminCount.count === 0 && password === 'admin' && username === 'admin') {
        return res.json({ success: true, username: 'admin', role: 'admin' });
     }
 
@@ -203,8 +296,10 @@ async function startServer() {
     }
 
     try {
+      const user = db.prepare("SELECT username FROM users WHERE id = ?").get(id) as any;
       const passwordHash = hashPassword(password);
       db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, id);
+      logEdit('users', Number(id), 'UPDATE', `User ${user?.username || id} password updated`, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to update user" });
@@ -216,11 +311,13 @@ async function startServer() {
     console.log(`Attempting to delete user ${id}`);
     try {
       // Prevent deleting the last admin or self if needed, but for now simple delete
+      const user = db.prepare("SELECT username FROM users WHERE id = ?").get(id) as any;
       const info = db.prepare("DELETE FROM users WHERE id = ?").run(id);
       console.log(`Deleted user ${id}, changes: ${info.changes}`);
       if (info.changes === 0) {
         return res.status(404).json({ error: "User not found" });
       }
+      logEdit('users', Number(id), 'DELETE', `User ${user?.username || id} deleted`, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       console.error("Delete user error:", err);
@@ -238,6 +335,7 @@ async function startServer() {
     const { name } = req.body;
     try {
       const info = db.prepare("INSERT INTO categories (name) VALUES (?)").run(name);
+      logEdit('categories', Number(info.lastInsertRowid), 'CREATE', `Category ${name} added`, getUsername(req));
       res.json({ id: Number(info.lastInsertRowid), name });
     } catch (err) {
       res.status(400).json({ error: "Category already exists" });
@@ -254,17 +352,29 @@ async function startServer() {
     res.json(items);
   });
 
+  app.get("/api/edit-logs", (req, res) => {
+    try {
+      const logs = db.prepare("SELECT * FROM edit_logs ORDER BY timestamp DESC").all();
+      res.json(logs);
+    } catch (err) {
+      console.error("Error fetching logs:", err);
+      res.status(500).json({ error: "Failed to fetch logs" });
+    }
+  });
+
   app.post("/api/items", (req, res) => {
-    const { name, price, category_id, sku, stock } = req.body;
+    const { name, price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
     
     if (!name || typeof price !== 'number' || isNaN(price)) {
       return res.status(400).json({ error: "Invalid item data. Name and valid price are required." });
     }
 
     try {
-      const info = db.prepare("INSERT INTO items (name, price, category_id, sku, stock) VALUES (?, ?, ?, ?, ?)")
-        .run(name, price, category_id, sku, stock);
-      res.json({ id: Number(info.lastInsertRowid), name, price, category_id, sku, stock });
+      const info = db.prepare("INSERT INTO items (name, price, category_id, sku, stock, image_url, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(name, price, category_id, sku, stock, image_url || null, low_stock_threshold || 5);
+      const itemId = Number(info.lastInsertRowid);
+      logEdit('items', itemId, 'CREATE', `Item ${name} added`, getUsername(req));
+      res.json({ id: itemId, name, price, category_id, sku, stock, image_url, low_stock_threshold });
     } catch (err) {
       console.error("Error adding item:", err);
       res.status(400).json({ error: "SKU must be unique or database error occurred" });
@@ -272,7 +382,7 @@ async function startServer() {
   });
 
   app.put("/api/items/:id", (req, res) => {
-    const { name, price, category_id, sku, stock } = req.body;
+    const { name, price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
     const { id } = req.params;
 
     if (!name || typeof price !== 'number' || isNaN(price)) {
@@ -280,8 +390,23 @@ async function startServer() {
     }
 
     try {
-      db.prepare("UPDATE items SET name = ?, price = ?, category_id = ?, sku = ?, stock = ? WHERE id = ?")
-        .run(name, price, category_id, sku, stock, id);
+      const oldItem = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as any;
+      if (!oldItem) return res.status(404).json({ error: "Item not found" });
+
+      db.prepare("UPDATE items SET name = ?, price = ?, category_id = ?, sku = ?, stock = ?, image_url = ?, low_stock_threshold = ? WHERE id = ?")
+        .run(name, price, category_id, sku, stock, image_url || null, low_stock_threshold, id);
+      
+      const changes: string[] = [];
+      if (oldItem.name !== name) changes.push(`Name: '${oldItem.name}' -> '${name}'`);
+      if (oldItem.price !== price) changes.push(`Price: ${oldItem.price} -> ${price}`);
+      if (oldItem.category_id !== category_id) changes.push(`Category: ${oldItem.category_id} -> ${category_id}`);
+      if (oldItem.sku !== sku) changes.push(`SKU: '${oldItem.sku}' -> '${sku}'`);
+      if (oldItem.stock !== stock) changes.push(`Stock: ${oldItem.stock} -> ${stock}`);
+      if (oldItem.image_url !== image_url) changes.push(`Image updated`);
+      if (oldItem.low_stock_threshold !== low_stock_threshold) changes.push(`Threshold: ${oldItem.low_stock_threshold} -> ${low_stock_threshold}`);
+      
+      const details = changes.length > 0 ? changes.join(', ') : 'No changes';
+      logEdit('items', Number(id), 'UPDATE', details, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       console.error("Error updating item:", err);
@@ -289,9 +414,51 @@ async function startServer() {
     }
   });
 
+  app.post("/api/items/:id/adjust-stock", (req, res) => {
+    const { id } = req.params;
+    const { adjustment, reason } = req.body;
+    
+    if (typeof adjustment !== 'number') {
+      return res.status(400).json({ error: "Adjustment must be a number" });
+    }
+
+    try {
+      const transaction = db.transaction(() => {
+        const itemBefore = db.prepare("SELECT name, stock FROM items WHERE id = ?").get(id) as any;
+        db.prepare("UPDATE items SET stock = stock + ? WHERE id = ?")
+          .run(adjustment, id);
+        db.prepare("INSERT INTO stock_adjustments (item_id, adjustment, reason, username) VALUES (?, ?, ?, ?)")
+          .run(id, adjustment, reason || null, getUsername(req));
+        
+        const newStock = itemBefore.stock + adjustment;
+        logEdit('items', Number(id), 'ADJUST_STOCK', `Stock for ${itemBefore?.name || 'Item ' + id} adjusted by ${adjustment} (${itemBefore.stock} -> ${newStock}). Reason: ${reason || 'None'}`, getUsername(req));
+      });
+      transaction();
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error adjusting stock:", err);
+      res.status(500).json({ error: "Failed to adjust stock" });
+    }
+  });
+
+  app.get("/api/items/:id/stock-history", (req, res) => {
+    const { id } = req.params;
+    try {
+      const history = db.prepare(`
+        SELECT * FROM stock_adjustments 
+        WHERE item_id = ? 
+        ORDER BY timestamp DESC
+      `).all(id);
+      res.json(history);
+    } catch (err) {
+      console.error("Error fetching stock history:", err);
+      res.status(500).json({ error: "Failed to fetch stock history" });
+    }
+  });
+
   // Sales
   app.post("/api/sales", (req, res) => {
-    const { items: saleItems, subtotal, tax, total, payment_method } = req.body;
+    const { items: saleItems, subtotal, tax, total, payment_method, discount } = req.body;
     
     if (!saleItems || !Array.isArray(saleItems) || saleItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
@@ -302,9 +469,10 @@ async function startServer() {
     }
     
     const transaction = db.transaction(() => {
-      const saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method) VALUES (?, ?, ?, ?)")
-        .run(subtotal, tax, total, payment_method);
+      const saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount) VALUES (?, ?, ?, ?, ?)")
+        .run(subtotal, tax, total, payment_method, discount || 0);
       const saleId = Number(saleInfo.lastInsertRowid);
+      logEdit('sales', saleId, 'CREATE', `Sale ${saleId} created with total ${total}`, getUsername(req));
 
       for (const item of saleItems) {
         if (!item.id || isNaN(item.quantity) || isNaN(item.price)) {
@@ -433,6 +601,7 @@ async function startServer() {
     
     try {
       const info = db.prepare("INSERT INTO payment_methods (name) VALUES (?)").run(name.toLowerCase());
+      logEdit('payment_methods', Number(info.lastInsertRowid), 'CREATE', `Payment method ${name.toLowerCase()} added`, getUsername(req));
       res.json({ id: Number(info.lastInsertRowid), name: name.toLowerCase(), is_active: 1 });
     } catch (err) {
       res.status(400).json({ error: "Payment method already exists" });
@@ -446,7 +615,9 @@ async function startServer() {
       // Actually, for simplicity, let's just delete. Historical sales will keep the string value.
       // But maybe safer to just mark inactive if we wanted to keep history clean, 
       // but since sales table stores the string value, deleting the definition is fine.
+      const pm = db.prepare("SELECT name FROM payment_methods WHERE id = ?").get(id) as any;
       db.prepare("DELETE FROM payment_methods WHERE id = ?").run(id);
+      logEdit('payment_methods', Number(id), 'DELETE', `Payment method ${pm?.name || id} deleted`, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete payment method" });
@@ -468,18 +639,42 @@ async function startServer() {
   });
 
   app.post("/api/settings", (req, res) => {
-    const { company_name, tax_rate, address, contact } = req.body;
+    const { company_name, tax_rate, address, contact, logo_url, app_logo_url, vat_id, currency, timezone } = req.body;
     try {
+      const oldSettingsRows = db.prepare("SELECT * FROM settings").all() as any[];
+      const oldSettings = oldSettingsRows.reduce((acc: any, curr: any) => {
+        acc[curr.key] = curr.value;
+        return acc;
+      }, {});
+
       const update = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
       const updateSettings = db.transaction(() => {
-        if (company_name !== undefined) update.run("company_name", company_name);
-        if (tax_rate !== undefined) update.run("tax_rate", tax_rate.toString());
-        if (address !== undefined) update.run("address", address);
-        if (contact !== undefined) update.run("contact", contact);
+        const changes: string[] = [];
+        const checkChange = (key: string, newValue: any) => {
+          if (newValue !== undefined && oldSettings[key] !== newValue.toString()) {
+            changes.push(`${key}: '${oldSettings[key] || ''}' -> '${newValue}'`);
+            update.run(key, newValue.toString());
+          }
+        };
+
+        checkChange("company_name", company_name);
+        checkChange("tax_rate", tax_rate);
+        checkChange("address", address);
+        checkChange("contact", contact);
+        checkChange("logo_url", logo_url);
+        checkChange("app_logo_url", app_logo_url);
+        checkChange("vat_id", vat_id);
+        checkChange("currency", currency);
+        checkChange("timezone", timezone);
+        
+        if (changes.length > 0) {
+          logEdit('settings', 0, 'UPDATE', `Settings updated: ${changes.join(', ')}`, getUsername(req));
+        }
       });
       updateSettings();
       res.json({ success: true });
     } catch (error) {
+      console.error("Error updating settings:", error);
       res.status(500).json({ error: "Failed to update settings" });
     }
   });

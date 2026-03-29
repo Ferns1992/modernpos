@@ -15,19 +15,135 @@ import {
   History,
   Tag,
   Sun,
-  Moon
+  Moon,
+  ShieldAlert,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod } from './types';
+
+interface StockAdjustment {
+  id: number;
+  item_id: number;
+  adjustment: number;
+  reason: string;
+  username: string;
+  timestamp: string;
+}
 
 interface Settings {
   company_name: string;
   tax_rate: string;
   address: string;
   contact: string;
+  logo_url: string;
+  app_logo_url: string;
+  vat_id: string;
+  currency: string;
+  timezone: string;
 }
 
-// --- Global Styles for Print ---
+const AuditLogs = () => {
+  const [logs, setLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch('/api/edit-logs')
+      .then(res => res.json())
+      .then(data => setLogs(data));
+  }, []);
+
+  const exportLogs = () => {
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + "Timestamp,User,Table,Action,Details\n"
+      + logs.map(log => `${new Date(log.timestamp).toISOString()},${log.username || 'System'},${log.table_name},${log.action},"${(log.details || '').replace(/"/g, '""')}"`).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `audit_logs_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <div className="p-8 max-w-6xl mx-auto space-y-8">
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Audit Logs</h2>
+        <button onClick={exportLogs} className="btn btn-primary flex items-center gap-2">
+          <Download size={18} /> Export CSV
+        </button>
+      </div>
+      <div className="card overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+            <tr>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Timestamp</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">User</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Table</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Action</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Details</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            {logs.map(log => (
+              <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                <td className="px-6 py-4 text-slate-600 dark:text-slate-300 font-mono text-xs">{new Date(log.timestamp).toLocaleString()}</td>
+                <td className="px-6 py-4 text-slate-900 dark:text-white font-bold">{log.username || 'System'}</td>
+                <td className="px-6 py-4 text-slate-900 dark:text-white font-bold">{log.table_name}</td>
+                <td className="px-6 py-4">
+                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                    log.action === 'CREATE' ? 'bg-emerald-50 text-emerald-600' : 
+                    log.action === 'UPDATE' ? 'bg-amber-50 text-amber-600' :
+                    log.action === 'DELETE' ? 'bg-red-50 text-red-600' :
+                    'bg-indigo-50 text-indigo-600'
+                  }`}>
+                    {log.action}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                  {(() => {
+                    try {
+                      const details = JSON.parse(log.details);
+                      if (typeof details === 'object' && details !== null) {
+                        return (
+                          <div className="space-y-1">
+                            {Object.entries(details).map(([key, value]: [string, any]) => (
+                              <div key={key} className="text-[10px] flex gap-2">
+                                <span className="font-bold uppercase text-slate-400">{key}:</span>
+                                {typeof value === 'object' && value !== null ? (
+                                  <span className="flex items-center gap-1">
+                                    <span className="text-red-500 line-through">{String(value.before)}</span>
+                                    <ChevronRight size={10} className="text-slate-400" />
+                                    <span className="text-emerald-500 font-bold">{String(value.after)}</span>
+                                  </span>
+                                ) : (
+                                  <span>{String(value)}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }
+                      return log.details;
+                    } catch (e) {
+                      return log.details;
+                    }
+                  })()}
+                </td>
+              </tr>
+            ))}
+            {logs.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">No logs recorded yet</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 const PrintStyles = () => (
   <style>{`
     @media print {
@@ -58,6 +174,18 @@ const PrintStyles = () => (
     }
   `}</style>
 );
+
+const uploadImage = async (file: File): Promise<string> => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error('Failed to upload image');
+  const data = await res.json();
+  return data.url;
+};
 
 // --- Components ---
 
@@ -96,7 +224,7 @@ const ThemeToggle = () => {
   );
 };
 
-const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab: string, setActiveTab: (tab: string) => void, onLogout: () => void, currentUser: { username: string, role: string } | null }) => {
+const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings }: { activeTab: string, setActiveTab: (tab: string) => void, onLogout: () => void, currentUser: { username: string, role: string } | null, settings: Settings }) => {
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
     { id: 'inventory', icon: Package, label: 'Inventory' },
@@ -105,17 +233,22 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab
 
   if (currentUser?.role === 'admin') {
     menuItems.push({ id: 'admin', icon: Settings, label: 'Admin' });
+    menuItems.push({ id: 'logs', icon: ShieldAlert, label: 'Audit Logs' });
   }
 
   return (
     <div className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col h-screen no-print">
       <div className="p-6 border-bottom border-slate-100 dark:border-slate-700">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-            <LayoutDashboard size={24} />
-          </div>
+          {settings.app_logo_url || settings.logo_url ? (
+            <img src={settings.app_logo_url || settings.logo_url} alt="Logo" className="w-10 h-10 object-contain rounded-xl shadow-lg shadow-indigo-200" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+              <LayoutDashboard size={24} />
+            </div>
+          )}
           <div>
-            <h1 className="font-bold text-slate-900 dark:text-white tracking-tight">Modern POS</h1>
+            <h1 className="font-bold text-slate-900 dark:text-white tracking-tight truncate max-w-[120px]">{settings.company_name || 'Modern POS'}</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Store Management</p>
           </div>
         </div>
@@ -156,13 +289,18 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser }: { activeTab
 const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], settings: Settings }) => {
   const now = new Date();
   const taxRate = parseFloat(settings.tax_rate) || 0;
+  const currency = settings.currency || '₱';
   
   return (
     <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
       <div className="text-center mb-2">
+        {settings.logo_url && (
+          <img src={settings.logo_url} alt="Company Logo" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
+        )}
         <h2 className="text-lg font-bold uppercase">{settings.company_name || 'MODERN STORE'}</h2>
         <p>{settings.address || '123 Business Street, City'}</p>
         <p>Tel: {settings.contact || '+1 234 567 890'}</p>
+        {settings.vat_id && <p>VAT ID: {settings.vat_id}</p>}
       </div>
       
       <div className="border-t border-b border-dashed border-black py-2 mb-2">
@@ -190,7 +328,7 @@ const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], sett
           <div key={idx} className="flex justify-between py-1">
             <span className="w-1/2 truncate">{item.name}</span>
             <span className="w-1/4 text-center">x{item.quantity}</span>
-            <span className="w-1/4 text-right">₱{(item.price * item.quantity).toFixed(2)}</span>
+            <span className="w-1/4 text-right">{currency}{(item.price * item.quantity).toFixed(2)}</span>
           </div>
         ))}
       </div>
@@ -198,15 +336,21 @@ const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], sett
       <div className="border-t border-dashed border-black pt-2 space-y-1">
         <div className="flex justify-between">
           <span>Subtotal:</span>
-          <span>₱{sale.subtotal?.toFixed(2)}</span>
+          <span>{currency}{sale.subtotal?.toFixed(2)}</span>
         </div>
         <div className="flex justify-between">
           <span>VAT ({taxRate}%):</span>
-          <span>₱{sale.tax?.toFixed(2)}</span>
+          <span>{currency}{sale.tax?.toFixed(2)}</span>
         </div>
+        {sale.discount > 0 && (
+          <div className="flex justify-between">
+            <span>Discount:</span>
+            <span>-{currency}{sale.discount.toFixed(2)}</span>
+          </div>
+        )}
         <div className="flex justify-between font-bold text-lg border-t border-black pt-1 mt-1">
           <span>TOTAL:</span>
-          <span>₱{sale.total?.toFixed(2)}</span>
+          <span>{currency}{sale.total?.toFixed(2)}</span>
         </div>
         <div className="flex justify-between mt-2">
           <span>Payment:</span>
@@ -227,6 +371,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
   console.log("Rendering ReportPrint", { report, salesHistory });
   const totalRevenue = report.summary.reduce((a, b) => a + b.total_sales, 0);
   const totalTransactions = report.summary.reduce((a, b) => a + b.transaction_count, 0);
+  const currency = settings.currency || '₱';
 
   return (
     <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
@@ -234,6 +379,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
         <h2 className="text-lg font-bold uppercase">{settings.company_name}</h2>
         <p>{settings.address}</p>
         <p>Tel: {settings.contact}</p>
+        {settings.vat_id && <p>VAT ID: {settings.vat_id}</p>}
         <div className="border-b border-black my-2"></div>
         <p className="text-sm font-bold uppercase">
           {type === 'day' ? 'DAILY' : type === 'month' ? 'MONTHLY' : 'YEARLY'} SALES REPORT
@@ -246,7 +392,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
         <h3 className="font-bold border-b border-dashed border-black mb-2">SALES SUMMARY</h3>
         <div className="flex justify-between mb-1">
           <span>Total Revenue:</span>
-          <span className="font-bold">₱{totalRevenue.toFixed(2)}</span>
+          <span className="font-bold">{currency}{totalRevenue.toFixed(2)}</span>
         </div>
         <div className="flex justify-between mb-1">
           <span>Transactions:</span>
@@ -254,7 +400,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
         </div>
         <div className="flex justify-between mb-1">
           <span>Avg Transaction:</span>
-          <span>₱{totalTransactions > 0 ? (totalRevenue / totalTransactions).toFixed(2) : '0.00'}</span>
+          <span>{currency}{totalTransactions > 0 ? (totalRevenue / totalTransactions).toFixed(2) : '0.00'}</span>
         </div>
         
         <div className="mt-2 pt-2 border-t border-dashed border-black">
@@ -262,7 +408,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
           {report.summary.map(s => (
             <div key={s.payment_method} className="flex justify-between mb-1 pl-2">
               <span className="uppercase">{s.payment_method}:</span>
-              <span>₱{s.total_sales.toFixed(2)}</span>
+              <span>{currency}{s.total_sales.toFixed(2)}</span>
             </div>
           ))}
         </div>
@@ -274,7 +420,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
           {report.categories.map((cat, idx) => (
             <div key={idx} className="flex justify-between mb-1">
               <span>{cat.name || 'Uncategorized'}</span>
-              <span>₱{cat.total_revenue.toFixed(2)}</span>
+              <span>{currency}{cat.total_revenue.toFixed(2)}</span>
             </div>
           ))}
         </div>
@@ -324,7 +470,7 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
 };
 
 // --- Settings Component ---
-const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (s: Settings) => void }) => {
+const SettingsPanel = ({ settings, onUpdate, currentUser }: { settings: Settings, onUpdate: (s: Settings) => void, currentUser: any }) => {
   const [formData, setFormData] = useState(settings);
   const [message, setMessage] = useState('');
 
@@ -337,7 +483,10 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify(formData),
       });
       if (res.ok) {
@@ -380,6 +529,48 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
               />
             </div>
             <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Receipt Logo</label>
+              <div className="flex gap-2 items-center">
+                {formData.logo_url && <img src={formData.logo_url} alt="Logo" className="h-10 w-10 object-contain rounded border border-slate-200 dark:border-slate-700" />}
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  className="input w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" 
+                  onChange={async (e) => {
+                    if (e.target.files?.[0]) {
+                      try {
+                        const url = await uploadImage(e.target.files[0]);
+                        setFormData({...formData, logo_url: url});
+                      } catch (err) {
+                        alert('Failed to upload image');
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">App Interface Logo</label>
+              <div className="flex gap-2 items-center">
+                {formData.app_logo_url && <img src={formData.app_logo_url} alt="App Logo" className="h-10 w-10 object-contain rounded border border-slate-200 dark:border-slate-700" />}
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  className="input w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" 
+                  onChange={async (e) => {
+                    if (e.target.files?.[0]) {
+                      try {
+                        const url = await uploadImage(e.target.files[0]);
+                        setFormData({...formData, app_logo_url: url});
+                      } catch (err) {
+                        alert('Failed to upload image');
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Tax Rate (%)</label>
               <input 
                 type="number" 
@@ -410,6 +601,87 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
                 onChange={handleChange}
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Company VAT ID</label>
+              <input 
+                type="text" 
+                name="vat_id"
+                className="input w-full" 
+                value={formData.vat_id || ''}
+                onChange={handleChange}
+                placeholder="e.g. GB123456789"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Currency</label>
+              <select 
+                name="currency"
+                className="input w-full" 
+                value={formData.currency || '₱'}
+                onChange={handleChange as any}
+              >
+                <optgroup label="North America">
+                  <option value="$">USD ($) - US Dollar</option>
+                  <option value="C$">CAD (C$) - Canadian Dollar</option>
+                  <option value="MX$">MXN (MX$) - Mexican Peso</option>
+                </optgroup>
+                <optgroup label="Europe">
+                  <option value="€">EUR (€) - Euro</option>
+                  <option value="£">GBP (£) - British Pound</option>
+                  <option value="CHF">CHF - Swiss Franc</option>
+                  <option value="kr">NOK/SEK/DKK (kr) - Krone</option>
+                  <option value="zł">PLN (zł) - Polish Zloty</option>
+                  <option value="₽">RUB (₽) - Russian Ruble</option>
+                  <option value="₺">TRY (₺) - Turkish Lira</option>
+                </optgroup>
+                <optgroup label="Asia">
+                  <option value="₱">PHP (₱) - Philippine Peso</option>
+                  <option value="¥">JPY (¥) - Japanese Yen</option>
+                  <option value="CN¥">CNY (CN¥) - Chinese Yuan</option>
+                  <option value="₹">INR (₹) - Indian Rupee</option>
+                  <option value="₩">KRW (₩) - South Korean Won</option>
+                  <option value="HK$">HKD (HK$) - Hong Kong Dollar</option>
+                  <option value="S$">SGD (S$) - Singapore Dollar</option>
+                  <option value="RM">MYR (RM) - Malaysian Ringgit</option>
+                  <option value="฿">THB (฿) - Thai Baht</option>
+                  <option value="Rp">IDR (Rp) - Indonesian Rupiah</option>
+                  <option value="₫">VND (₫) - Vietnamese Dong</option>
+                  <option value="₨">PKR (₨) - Pakistani Rupee</option>
+                  <option value="৳">BDT (৳) - Bangladeshi Taka</option>
+                </optgroup>
+                <optgroup label="Middle East & Africa">
+                  <option value="د.إ">AED (د.إ) - UAE Dirham</option>
+                  <option value="SAR">SAR - Saudi Riyal</option>
+                  <option value="BHD">BHD - Bahraini Dinar</option>
+                  <option value="R">ZAR (R) - South African Rand</option>
+                  <option value="₦">NGN (₦) - Nigerian Naira</option>
+                  <option value="E£">EGP (E£) - Egyptian Pound</option>
+                  <option value="KSh">KES (KSh) - Kenyan Shilling</option>
+                </optgroup>
+                <optgroup label="Oceania & South America">
+                  <option value="A$">AUD (A$) - Australian Dollar</option>
+                  <option value="NZ$">NZD (NZ$) - New Zealand Dollar</option>
+                  <option value="R$">BRL (R$) - Brazilian Real</option>
+                  <option value="$">ARS ($) - Argentine Peso</option>
+                  <option value="CLP$">CLP (CLP$) - Chilean Peso</option>
+                  <option value="COL$">COP (COL$) - Colombian Peso</option>
+                  <option value="S/">PEN (S/) - Peruvian Sol</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Timezone</label>
+              <select 
+                name="timezone"
+                className="input w-full" 
+                value={formData.timezone || 'UTC'}
+                onChange={handleChange as any}
+              >
+                {Intl.supportedValuesOf('timeZone').map(tz => (
+                  <option key={tz} value={tz}>{tz}</option>
+                ))}
+              </select>
+            </div>
           </div>
           
           {message && <div className={`p-3 text-sm rounded-lg ${message.includes('Failed') || message.includes('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{message}</div>}
@@ -422,7 +694,7 @@ const SettingsPanel = ({ settings, onUpdate }: { settings: Settings, onUpdate: (
 };
 
 // --- Admin Component ---
-const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () => void }) => {
+const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMethods?: () => void, currentUser: any }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('cashier');
@@ -475,7 +747,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
     try {
       const res = await fetch('/api/payment-methods', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify({ name: newPaymentMethod }),
       });
       
@@ -495,7 +770,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
   const handleDeletePaymentMethod = async (id: number) => {
     if (!confirm('Are you sure you want to delete this payment method?')) return;
     try {
-      const res = await fetch(`/api/payment-methods/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/payment-methods/${id}`, { 
+        method: 'DELETE',
+        headers: { 'X-Username': currentUser?.username || 'System' }
+      });
       if (res.ok) {
         fetchPaymentMethods();
         onUpdatePaymentMethods?.();
@@ -513,7 +791,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify({ username, password, role }),
       });
       const data = await res.json();
@@ -538,7 +819,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
   const confirmDeleteUser = async () => {
     if (!userToDelete) return;
     try {
-      const res = await fetch(`/api/users/${userToDelete}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/${userToDelete}`, { 
+        method: 'DELETE',
+        headers: { 'X-Username': currentUser?.username || 'System' }
+      });
       if (res.ok) {
         fetchUsers();
         setUserToDelete(null);
@@ -555,7 +839,10 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
     try {
       const res = await fetch(`/api/users/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify({ password: newPassword }),
       });
       if (res.ok) {
@@ -764,7 +1051,7 @@ const AdminPanel = ({ onUpdatePaymentMethods }: { onUpdatePaymentMethods?: () =>
 };
 
 // --- Login Component ---
-const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
+const Login = ({ onLogin, settings }: { onLogin: (user: any) => void, settings: Settings }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -800,10 +1087,14 @@ const Login = ({ onLogin }: { onLogin: (user: any) => void }) => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-2xl shadow-xl dark:shadow-none overflow-hidden">
         <div className="bg-indigo-600 p-8 text-center">
-          <div className="w-16 h-16 bg-white dark:bg-slate-800/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
-            <LayoutDashboard size={32} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-2">Modern POS</h1>
+          {settings.app_logo_url || settings.logo_url ? (
+            <img src={settings.app_logo_url || settings.logo_url} alt="Logo" className="w-16 h-16 mx-auto mb-4 object-contain rounded-2xl bg-white p-1 shadow-lg shadow-indigo-200" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-16 h-16 bg-white dark:bg-slate-800/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
+              <LayoutDashboard size={32} className="text-white" />
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-white mb-2">{settings.company_name || 'Modern POS'}</h1>
           <p className="text-indigo-100">Store Management System</p>
         </div>
         
@@ -873,11 +1164,19 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [showReceipt, setShowReceipt] = useState(false);
-  const [lastSale, setLastSale] = useState<{ id: number; subtotal: number; tax: number; total: number; payment_method: string; items: CartItem[] } | null>(null);
+  const [discount, setDiscount] = useState('');
+  const [lastSale, setLastSale] = useState<{ id: number; subtotal: number; tax: number; total: number; payment_method: string; items: CartItem[], discount: number } | null>(null);
 
   // Inventory State
-  const [newItem, setNewItem] = useState({ name: '', price: '', category_id: '', sku: '', stock: '' });
+  const [newItem, setNewItem] = useState({ name: '', price: '', category_id: '', sku: '', stock: '', image_url: '', low_stock_threshold: '5' });
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [newCategory, setNewCategory] = useState('');
+  const [adjustStockItem, setAdjustStockItem] = useState<Item | null>(null);
+  const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [stockHistoryItem, setStockHistoryItem] = useState<Item | null>(null);
+  const [stockHistory, setStockHistory] = useState<StockAdjustment[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Reports State
   const [dayEndReport, setDayEndReport] = useState<DayEndReport | null>(null);
@@ -891,16 +1190,21 @@ export default function App() {
     company_name: 'MODERN STORE',
     tax_rate: '12',
     address: '123 Main St, City',
-    contact: '555-0123'
+    contact: '555-0123',
+    logo_url: '',
+    app_logo_url: '',
+    vat_id: '',
+    currency: '₱',
+    timezone: 'UTC'
   });
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
 
   useEffect(() => {
+    fetchSettings();
     if (isAuthenticated) {
       fetchItems();
       fetchCategories();
-      fetchSettings();
       fetchPaymentMethods();
     }
   }, [isAuthenticated]);
@@ -953,6 +1257,54 @@ export default function App() {
     setCategories(data);
   };
 
+  const fetchStockHistory = async (itemId: number) => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/items/${itemId}/stock-history`);
+      if (res.ok) {
+        const data = await res.json();
+        setStockHistory(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch stock history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleAdjustStock = async () => {
+    if (!adjustStockItem || !adjustmentAmount) return;
+    
+    const adjustment = parseInt(adjustmentAmount);
+    if (isNaN(adjustment)) {
+      alert("Please enter a valid number");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/items/${adjustStockItem.id}/adjust-stock`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
+        body: JSON.stringify({ adjustment, reason: adjustmentReason })
+      });
+      
+      if (res.ok) {
+        setAdjustStockItem(null);
+        setAdjustmentAmount('');
+        setAdjustmentReason('');
+        fetchItems();
+      } else {
+        alert("Failed to adjust stock");
+      }
+    } catch (err) {
+      console.error("Error adjusting stock:", err);
+      alert("Failed to adjust stock");
+    }
+  };
+
   const addToCart = (item: Item) => {
     if (isNaN(item.price) || item.price < 0) {
       alert("This item has an invalid price and cannot be added to the cart.");
@@ -993,16 +1345,23 @@ export default function App() {
       return;
     }
 
+    const discountValue = parseFloat(discount) || 0;
+    const finalTotal = Math.max(0, cartTotal - discountValue);
+
     try {
       const res = await fetch('/api/sales', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify({
           items: cart,
           subtotal: cartSubtotal,
           tax: cartTax,
-          total: cartTotal,
-          payment_method: paymentMethod
+          total: finalTotal,
+          payment_method: paymentMethod,
+          discount: discountValue
         })
       });
       const data = await res.json();
@@ -1012,12 +1371,14 @@ export default function App() {
           id: data.id, 
           subtotal: cartSubtotal, 
           tax: cartTax, 
-          total: cartTotal, 
+          total: finalTotal, 
           payment_method: paymentMethod,
-          items: [...cart]
+          items: [...cart],
+          discount: discountValue
         });
         setShowReceipt(true);
         setCart([]);
+        setDiscount('');
         fetchItems(); // Refresh stock
       } else {
         console.error('Checkout failed:', data.error, data.details);
@@ -1033,7 +1394,10 @@ export default function App() {
     if (!newCategory) return;
     await fetch('/api/categories', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Username': currentUser?.username || 'System'
+      },
       body: JSON.stringify({ name: newCategory })
     });
     setNewCategory('');
@@ -1043,6 +1407,7 @@ export default function App() {
   const handleAddItem = async () => {
     const price = parseFloat(newItem.price);
     const stock = parseInt(newItem.stock) || 0;
+    const threshold = parseInt(newItem.low_stock_threshold) || 5;
     
     if (!newItem.name || isNaN(price)) {
       alert("Please enter a valid name and price");
@@ -1052,17 +1417,22 @@ export default function App() {
     try {
       const res = await fetch('/api/items', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
         body: JSON.stringify({
           ...newItem,
           price: price,
           category_id: newItem.category_id ? parseInt(newItem.category_id) : null,
-          stock: stock
+          stock: stock,
+          image_url: newItem.image_url,
+          low_stock_threshold: threshold
         })
       });
       
       if (res.ok) {
-        setNewItem({ name: '', price: '', category_id: '', sku: '', stock: '' });
+        setNewItem({ name: '', price: '', category_id: '', sku: '', stock: '', image_url: '', low_stock_threshold: '5' });
         fetchItems();
       } else {
         const data = await res.json();
@@ -1070,6 +1440,46 @@ export default function App() {
       }
     } catch (err) {
       alert("Error adding item");
+    }
+  };
+
+  const handleUpdateItem = async () => {
+    if (!editingItem) return;
+    const price = parseFloat(editingItem.price.toString());
+    const stock = parseInt(editingItem.stock.toString());
+    const threshold = parseInt(editingItem.low_stock_threshold?.toString() || '5');
+    
+    if (!editingItem.name || isNaN(price)) {
+      alert("Please enter a valid name and price");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/items/${editingItem.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
+        body: JSON.stringify({
+          ...editingItem,
+          price: price,
+          category_id: editingItem.category_id ? parseInt(editingItem.category_id.toString()) : null,
+          stock: stock,
+          image_url: editingItem.image_url,
+          low_stock_threshold: threshold
+        })
+      });
+      
+      if (res.ok) {
+        setEditingItem(null);
+        fetchItems();
+      } else {
+        const data = await res.json();
+        alert("Failed to update item: " + (data.error || "Unknown error"));
+      }
+    } catch (err) {
+      alert("Error updating item");
     }
   };
 
@@ -1168,8 +1578,25 @@ export default function App() {
     }
   };
 
+  const exportToCSV = (data: any[], filename: string, headers: string[]) => {
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row => headers.map(header => JSON.stringify(row[header] || '')).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={handleLogin} settings={settings} />;
   }
 
   return (
@@ -1177,15 +1604,18 @@ export default function App() {
       <PrintStyles />
       <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-900 main-container no-print">
         <div className="flex w-full h-full">
-          <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} currentUser={currentUser} />
+          <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} currentUser={currentUser} settings={settings} />
 
         <main className="flex-1 overflow-auto relative">
           <AnimatePresence mode="wait">
           {activeTab === 'admin' && currentUser?.role === 'admin' && (
              <div className="space-y-8">
-               <AdminPanel onUpdatePaymentMethods={fetchPaymentMethods} />
-               <SettingsPanel settings={settings} onUpdate={setSettings} />
+               <AdminPanel onUpdatePaymentMethods={fetchPaymentMethods} currentUser={currentUser} />
+               <SettingsPanel settings={settings} onUpdate={setSettings} currentUser={currentUser} />
              </div>
+          )}
+          {activeTab === 'logs' && currentUser?.role === 'admin' && (
+             <AuditLogs />
           )}
           {activeTab === 'pos' && (
             <motion.div 
@@ -1238,14 +1668,20 @@ export default function App() {
                       onClick={() => addToCart(item)}
                       className="card p-4 text-left hover:border-indigo-500 hover:shadow-md transition-all group"
                     >
-                      <div className="w-full aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg mb-3 flex items-center justify-center text-slate-400 dark:text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-all">
-                        <Tag size={32} />
+                      <div className="w-full aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg mb-3 flex items-center justify-center text-slate-400 dark:text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-all overflow-hidden">
+                        {item.image_url ? (
+                          <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Tag size={32} />
+                        )}
                       </div>
                       <h3 className="font-bold text-slate-900 dark:text-white truncate">{item.name}</h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">{item.category_name || 'No Category'}</p>
                       <div className="flex items-center justify-between">
-                        <span className="text-indigo-600 font-bold">₱{item.price.toFixed(2)}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${item.stock > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                        <span className="text-indigo-600 font-bold">{settings.currency || '₱'}{item.price.toFixed(2)}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          item.stock > (item.low_stock_threshold || 5) ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                        }`}>
                           {item.stock} in stock
                         </span>
                       </div>
@@ -1274,9 +1710,12 @@ export default function App() {
                   ) : (
                     cart.map(item => (
                       <div key={item.id} className="flex gap-3 items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700">
+                        {item.image_url && (
+                          <img src={item.image_url} alt={item.name} className="w-12 h-12 object-cover rounded-lg" referrerPolicy="no-referrer" />
+                        )}
                         <div className="flex-1 min-w-0">
                           <h4 className="font-bold text-slate-900 dark:text-white truncate">{item.name}</h4>
-                          <p className="text-sm text-indigo-600 font-medium">₱{item.price.toFixed(2)}</p>
+                          <p className="text-sm text-indigo-600 font-medium">{settings.currency || '₱'}{item.price.toFixed(2)}</p>
                         </div>
                         <div className="flex items-center gap-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-1">
                           <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-slate-50 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400">
@@ -1299,15 +1738,25 @@ export default function App() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-slate-500 dark:text-slate-400">
                       <span>Subtotal</span>
-                      <span>₱{cartSubtotal.toFixed(2)}</span>
+                      <span>{settings.currency || '₱'}{cartSubtotal.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-slate-500 dark:text-slate-400">
                       <span>VAT ({settings.tax_rate}%)</span>
-                      <span>₱{cartTax.toFixed(2)}</span>
+                      <span>{settings.currency || '₱'}{cartTax.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                      <span>Discount</span>
+                      <input 
+                        type="number" 
+                        value={discount} 
+                        onChange={e => setDiscount(e.target.value)} 
+                        className="w-20 text-right input py-1" 
+                        placeholder="0.00"
+                      />
                     </div>
                     <div className="flex justify-between text-2xl font-bold text-slate-900 dark:text-white pt-2 border-t border-slate-200 dark:border-slate-700">
                       <span>Total</span>
-                      <span>₱{cartTotal.toFixed(2)}</span>
+                      <span>{settings.currency || '₱'}{Math.max(0, cartTotal - (parseFloat(discount) || 0)).toFixed(2)}</span>
                     </div>
                   </div>
 
@@ -1346,7 +1795,44 @@ export default function App() {
                   <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Inventory Management</h2>
                   <p className="text-slate-500 dark:text-slate-400">Manage your products and categories</p>
                 </div>
+                <button 
+                  onClick={() => exportToCSV(items, 'inventory.csv', ['name', 'sku', 'price', 'stock', 'category_name'])}
+                  className="btn btn-secondary"
+                >
+                  Export CSV
+                </button>
               </div>
+
+              {items.some(item => item.stock <= (item.low_stock_threshold || 5)) && (
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 rounded-2xl p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-red-100 dark:bg-red-900/40 rounded-full flex items-center justify-center text-red-600 dark:text-red-400">
+                      <ShieldAlert size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-red-900 dark:text-red-100">Low Stock Alerts</h3>
+                      <p className="text-sm text-red-600 dark:text-red-400">The following items are running low on stock</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {items.filter(item => item.stock <= (item.low_stock_threshold || 5)).map(item => (
+                      <div key={item.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {item.image_url && <img src={item.image_url} alt={item.name} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />}
+                          <div>
+                            <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">Threshold: {item.low_stock_threshold || 5}</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-red-600">{item.stock}</div>
+                          <div className="text-[10px] uppercase font-bold text-slate-400">Left</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Add Item Form */}
@@ -1410,6 +1896,37 @@ export default function App() {
                           onChange={e => setNewItem({...newItem, stock: e.target.value})}
                         />
                       </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Low Stock Alert</label>
+                        <input 
+                          type="number" 
+                          className="input" 
+                          placeholder="5" 
+                          value={newItem.low_stock_threshold}
+                          onChange={e => setNewItem({...newItem, low_stock_threshold: e.target.value})}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Product Image</label>
+                        <div className="flex gap-2 items-center">
+                          {newItem.image_url && <img src={newItem.image_url} alt="Preview" className="h-10 w-10 object-cover rounded border border-slate-200 dark:border-slate-700" />}
+                          <input 
+                            type="file" 
+                            accept="image/*"
+                            className="input text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" 
+                            onChange={async (e) => {
+                              if (e.target.files?.[0]) {
+                                try {
+                                  const url = await uploadImage(e.target.files[0]);
+                                  setNewItem({...newItem, image_url: url});
+                                } catch (err) {
+                                  alert('Failed to upload image');
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
                     <button onClick={handleAddItem} className="btn btn-primary w-full mt-6">Add Item to Inventory</button>
                   </div>
@@ -1427,18 +1944,49 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {items.map(item => (
                           <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
-                              <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">{item.sku || 'No SKU'}</div>
+                            <td className="px-6 py-4 flex items-center gap-4">
+                              {item.image_url && (
+                                <img src={item.image_url} alt={item.name} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
+                              )}
+                              <div>
+                                <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
+                                <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">{item.sku || 'No SKU'}</div>
+                              </div>
                             </td>
                             <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{item.category_name || '-'}</td>
-                            <td className="px-6 py-4 font-medium text-indigo-600">₱{item.price.toFixed(2)}</td>
+                            <td className="px-6 py-4 font-medium text-indigo-600">{settings.currency || '₱'}{item.price.toFixed(2)}</td>
                             <td className="px-6 py-4 text-right">
-                              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                                item.stock > 10 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                              }`}>
-                                {item.stock}
-                              </span>
+                              <div className="flex items-center justify-end gap-2">
+                                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                                  item.stock > (item.low_stock_threshold || 5) ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                                }`}>
+                                  {item.stock}
+                                </span>
+                                <button 
+                                  onClick={() => setAdjustStockItem(item)}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-600 rounded text-slate-500"
+                                  title="Adjust Stock"
+                                >
+                                  <Plus size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setStockHistoryItem(item);
+                                    fetchStockHistory(item.id);
+                                  }}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-600 rounded text-amber-500"
+                                  title="Stock History"
+                                >
+                                  <History size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => setEditingItem(item)}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-600 rounded text-indigo-500"
+                                  title="Edit Item"
+                                >
+                                  Edit
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1500,6 +2048,12 @@ export default function App() {
                   <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Sales & Reports</h2>
                   <p className="text-slate-500 dark:text-slate-400">Track your business performance</p>
                 </div>
+                <button 
+                  onClick={() => exportToCSV(dayEndReport?.items || [], 'top_selling_items.csv', ['name', 'total_quantity', 'total_revenue'])}
+                  className="btn btn-secondary"
+                >
+                  Export CSV
+                </button>
                 <div className="flex gap-4 items-end">
                   <div className="flex flex-col gap-1">
                     <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Type</label>
@@ -1543,7 +2097,7 @@ export default function App() {
                     {reportType === 'day' ? "Today's" : reportType === 'month' ? "This Month's" : "This Year's"} Total Sales
                   </p>
                   <h3 className="text-4xl font-bold">
-                    ₱{dayEndReport?.summary.reduce((a, b) => a + b.total_sales, 0).toFixed(2) || '0.00'}
+                    {settings.currency || '₱'}{dayEndReport?.summary.reduce((a, b) => a + b.total_sales, 0).toFixed(2) || '0.00'}
                   </h3>
                   <div className="mt-4 flex items-center gap-2 text-indigo-100 text-sm">
                     <History size={16} />
@@ -1554,7 +2108,7 @@ export default function App() {
                 {dayEndReport?.summary.map(s => (
                   <div key={s.payment_method} className="card p-6">
                     <p className="text-slate-500 dark:text-slate-400 text-sm font-bold uppercase tracking-wider mb-1">{s.payment_method} Sales</p>
-                    <h3 className="text-3xl font-bold text-slate-900 dark:text-white">₱{s.total_sales.toFixed(2)}</h3>
+                    <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{settings.currency || '₱'}{s.total_sales.toFixed(2)}</h3>
                     <p className="text-slate-400 dark:text-slate-500 text-sm mt-2">{s.transaction_count} Transactions</p>
                   </div>
                 ))}
@@ -1580,7 +2134,7 @@ export default function App() {
                           <tr key={idx}>
                             <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{item.name}</td>
                             <td className="px-6 py-4 text-center text-slate-600 dark:text-slate-300">{item.total_quantity}</td>
-                            <td className="px-6 py-4 text-right font-bold text-indigo-600">₱{item.total_revenue.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-bold text-indigo-600">{settings.currency || '₱'}{item.total_revenue.toFixed(2)}</td>
                           </tr>
                         ))}
                         {(!dayEndReport?.items || dayEndReport.items.length === 0) && (
@@ -1618,7 +2172,7 @@ export default function App() {
                                 {sale.payment_method}
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-right font-bold text-slate-900 dark:text-white">₱{sale.total.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-900 dark:text-white">{settings.currency || '₱'}{sale.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1673,6 +2227,232 @@ export default function App() {
       </AnimatePresence>
       </div>
       </div>
+
+      {/* Stock Adjustment Modal */}
+      <AnimatePresence>
+        {adjustStockItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4"
+            >
+              <h3 className="text-xl font-bold">Adjust Stock: {adjustStockItem.name}</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Current Stock: {adjustStockItem.stock}</p>
+              <div>
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Adjustment Amount (+/-)</label>
+                <input 
+                  type="number" 
+                  className="input w-full" 
+                  placeholder="e.g. 5 or -5" 
+                  value={adjustmentAmount}
+                  onChange={e => setAdjustmentAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Reason (Optional)</label>
+                <input 
+                  type="text" 
+                  className="input w-full" 
+                  placeholder="e.g. Damaged, Restock" 
+                  value={adjustmentReason}
+                  onChange={e => setAdjustmentReason(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-4 mt-6">
+                <button onClick={() => setAdjustStockItem(null)} className="btn btn-secondary flex-1">Cancel</button>
+                <button onClick={handleAdjustStock} className="btn btn-primary flex-1">Adjust Stock</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Item Modal */}
+      <AnimatePresence>
+        {editingItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl dark:shadow-none max-w-md w-full overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                <h3 className="text-xl font-bold">Edit Item</h3>
+                <button onClick={() => setEditingItem(null)} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
+                  <ChevronRight size={24} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Item Name</label>
+                  <input 
+                    type="text" 
+                    className="input w-full" 
+                    value={editingItem.name}
+                    onChange={e => setEditingItem({...editingItem, name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Price</label>
+                  <input 
+                    type="number" 
+                    className="input w-full" 
+                    value={editingItem.price}
+                    onChange={e => setEditingItem({...editingItem, price: parseFloat(e.target.value) || 0})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Category</label>
+                  <select 
+                    className="input w-full"
+                    value={editingItem.category_id || ''}
+                    onChange={e => setEditingItem({...editingItem, category_id: e.target.value})}
+                  >
+                    <option value="">Select Category</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">SKU / Barcode</label>
+                  <input 
+                    type="text" 
+                    className="input w-full" 
+                    value={editingItem.sku || ''}
+                    onChange={e => setEditingItem({...editingItem, sku: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Stock</label>
+                  <input 
+                    type="number" 
+                    className="input w-full" 
+                    value={editingItem.stock}
+                    onChange={e => setEditingItem({...editingItem, stock: parseInt(e.target.value) || 0})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Low Stock Threshold</label>
+                  <input 
+                    type="number" 
+                    className="input w-full" 
+                    value={editingItem.low_stock_threshold || ''}
+                    onChange={e => setEditingItem({...editingItem, low_stock_threshold: parseInt(e.target.value) || 0})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Product Image</label>
+                  <div className="flex gap-2 items-center">
+                    {editingItem.image_url && <img src={editingItem.image_url} alt="Preview" className="h-10 w-10 object-cover rounded border border-slate-200 dark:border-slate-700" />}
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      className="input w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" 
+                      onChange={async (e) => {
+                        if (e.target.files?.[0]) {
+                          try {
+                            const url = await uploadImage(e.target.files[0]);
+                            setEditingItem({...editingItem, image_url: url});
+                          } catch (err) {
+                            alert('Failed to upload image');
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 grid grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-700">
+                <button 
+                  onClick={handleUpdateItem}
+                  className="btn btn-primary"
+                >
+                  Save Changes
+                </button>
+                <button 
+                  onClick={() => setEditingItem(null)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Stock History Modal */}
+      <AnimatePresence>
+        {stockHistoryItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[80vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-4">
+                <div>
+                  <h3 className="text-xl font-bold">Stock History: {stockHistoryItem.name}</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">SKU: {stockHistoryItem.sku || 'N/A'}</p>
+                </div>
+                <button onClick={() => setStockHistoryItem(null)} className="text-slate-400 hover:text-slate-600">
+                  <ChevronRight size={24} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto">
+                {loadingHistory ? (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                  </div>
+                ) : stockHistory.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">No adjustment history found for this item.</div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead className="sticky top-0 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
+                      <tr>
+                        <th className="py-3 text-xs font-bold text-slate-500 uppercase">Date & Time</th>
+                        <th className="py-3 text-xs font-bold text-slate-500 uppercase">User</th>
+                        <th className="py-3 text-xs font-bold text-slate-500 uppercase text-right">Adjustment</th>
+                        <th className="py-3 text-xs font-bold text-slate-500 uppercase px-4">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 dark:divide-slate-700">
+                      {stockHistory.map(log => (
+                        <tr key={log.id} className="text-sm">
+                          <td className="py-3 text-slate-600 dark:text-slate-400">
+                            {new Date(log.timestamp).toLocaleString(undefined, {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="py-3 font-medium text-slate-900 dark:text-white">{log.username || 'System'}</td>
+                          <td className={`py-3 text-right font-bold ${log.adjustment > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {log.adjustment > 0 ? `+${log.adjustment}` : log.adjustment}
+                          </td>
+                          <td className="py-3 px-4 text-slate-500 italic">{log.reason || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-700">
+                <button onClick={() => setStockHistoryItem(null)} className="btn btn-secondary w-full">Close History</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Hidden Print Content Area - Always rendered to ensure availability for print */}
       <div className="print-only">
