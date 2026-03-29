@@ -108,6 +108,18 @@ try {
   db.prepare("ALTER TABLE stock_adjustments ADD COLUMN username TEXT").run();
 } catch (e) {}
 
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN status TEXT DEFAULT 'completed'").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN status_reason TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN customer_id INTEGER").run();
+} catch (e) {}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS sale_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +150,15 @@ db.exec(`
     username TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (item_id) REFERENCES items(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS edit_logs (
@@ -458,7 +479,7 @@ async function startServer() {
 
   // Sales
   app.post("/api/sales", (req, res) => {
-    const { items: saleItems, subtotal, tax, total, payment_method, discount, timestamp } = req.body;
+    const { items: saleItems, subtotal, tax, total, payment_method, discount, timestamp, customer_id } = req.body;
     
     if (!saleItems || !Array.isArray(saleItems) || saleItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
@@ -471,11 +492,11 @@ async function startServer() {
     const transaction = db.transaction(() => {
       let saleInfo;
       if (timestamp) {
-        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
-          .run(subtotal, tax, total, payment_method, discount || 0, timestamp);
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, timestamp, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0, timestamp, customer_id || null);
       } else {
-        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount) VALUES (?, ?, ?, ?, ?)")
-          .run(subtotal, tax, total, payment_method, discount || 0);
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, customer_id) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0, customer_id || null);
       }
       const saleId = Number(saleInfo.lastInsertRowid);
       logEdit('sales', saleId, 'CREATE', `Sale ${saleId} created with total ${total}`, getUsername(req));
@@ -507,6 +528,90 @@ async function startServer() {
     }
   });
 
+  app.get("/api/sales/:id/items", (req, res) => {
+    const { id } = req.params;
+    try {
+      const items = db.prepare(`
+        SELECT sale_items.*, items.name as name, items.sku as sku
+        FROM sale_items
+        JOIN items ON sale_items.item_id = items.id
+        WHERE sale_id = ?
+      `).all(id);
+      res.json(items);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch sale items" });
+    }
+  });
+
+  app.post("/api/sales/:id/void", (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const username = getUsername(req);
+
+    try {
+      const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(id) as any;
+      if (!sale) return res.status(404).json({ error: "Sale not found" });
+      if (sale.status === 'voided') return res.status(400).json({ error: "Sale already voided" });
+
+      const transaction = db.transaction(() => {
+        // Update sale status
+        db.prepare("UPDATE sales SET status = 'voided', status_reason = ? WHERE id = ?").run(reason, id);
+        
+        // Restock items
+        const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(id) as any[];
+        for (const item of items) {
+          db.prepare("UPDATE items SET stock = stock + ? WHERE id = ?").run(item.quantity, item.item_id);
+          // Log stock adjustment
+          db.prepare("INSERT INTO stock_adjustments (item_id, adjustment, reason, username) VALUES (?, ?, ?, ?)")
+            .run(item.item_id, item.quantity, `Voided Sale #${id}: ${reason || 'No reason'}`, username);
+        }
+        
+        logEdit('sales', Number(id), 'UPDATE', `Sale ${id} voided: ${reason}`, username);
+      });
+
+      transaction();
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Void sale error:", err);
+      res.status(500).json({ error: "Failed to void sale" });
+    }
+  });
+
+  app.post("/api/sales/:id/refund", (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const username = getUsername(req);
+
+    try {
+      const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(id) as any;
+      if (!sale) return res.status(404).json({ error: "Sale not found" });
+      if (sale.status === 'refunded') return res.status(400).json({ error: "Sale already refunded" });
+      if (sale.status === 'voided') return res.status(400).json({ error: "Cannot refund a voided sale" });
+
+      const transaction = db.transaction(() => {
+        // Update sale status
+        db.prepare("UPDATE sales SET status = 'refunded', status_reason = ? WHERE id = ?").run(reason, id);
+        
+        // Restock items
+        const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(id) as any[];
+        for (const item of items) {
+          db.prepare("UPDATE items SET stock = stock + ? WHERE id = ?").run(item.quantity, item.item_id);
+          // Log stock adjustment
+          db.prepare("INSERT INTO stock_adjustments (item_id, adjustment, reason, username) VALUES (?, ?, ?, ?)")
+            .run(item.item_id, item.quantity, `Refunded Sale #${id}: ${reason || 'No reason'}`, username);
+        }
+        
+        logEdit('sales', Number(id), 'UPDATE', `Sale ${id} refunded: ${reason}`, username);
+      });
+
+      transaction();
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Refund sale error:", err);
+      res.status(500).json({ error: "Failed to refund sale" });
+    }
+  });
+
   // Reports
   app.get("/api/reports/sales", (req, res) => {
     const { type, date } = req.query;
@@ -523,9 +628,11 @@ async function startServer() {
 
     try {
       const sales = db.prepare(`
-        SELECT * FROM sales 
+        SELECT s.*, c.name as customer_name, c.phone as customer_phone 
+        FROM sales s
+        LEFT JOIN customers c ON s.customer_id = c.id
         WHERE ${timeFilter}
-        ORDER BY timestamp DESC
+        ORDER BY s.timestamp DESC
       `).all(targetDate);
       res.json(sales);
     } catch (err) {
@@ -551,7 +658,7 @@ async function startServer() {
       const summary = db.prepare(`
         SELECT 
           COUNT(*) as transaction_count,
-          SUM(total) as total_sales,
+          COALESCE(SUM(CASE WHEN status = 'completed' THEN total ELSE 0 END), 0) as total_sales,
           payment_method
         FROM sales 
         WHERE ${timeFilter}
@@ -561,12 +668,12 @@ async function startServer() {
       const items = db.prepare(`
         SELECT 
           items.name,
-          SUM(sale_items.quantity) as total_quantity,
-          SUM(sale_items.quantity * sale_items.price_at_sale) as total_revenue
+          COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
+          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue
         FROM sale_items
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
-        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')}
+        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'
         GROUP BY items.id
         ORDER BY total_revenue DESC
       `).all(targetDate);
@@ -574,12 +681,12 @@ async function startServer() {
       const categories = db.prepare(`
         SELECT 
           categories.name,
-          SUM(sale_items.quantity * sale_items.price_at_sale) as total_revenue
+          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue
         FROM sale_items
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
         LEFT JOIN categories ON items.category_id = categories.id
-        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')}
+        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'
         GROUP BY categories.id
         ORDER BY total_revenue DESC
       `).all(targetDate);
@@ -627,6 +734,41 @@ async function startServer() {
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete payment method" });
+    }
+  });
+
+  // Customers
+  app.get("/api/customers", (req, res) => {
+    const { search } = req.query;
+    try {
+      let customers;
+      if (search) {
+        customers = db.prepare(`
+          SELECT * FROM customers 
+          WHERE name LIKE ? OR phone LIKE ? 
+          LIMIT 20
+        `).all(`%${search}%`, `%${search}%`);
+      } else {
+        customers = db.prepare("SELECT * FROM customers LIMIT 100").all();
+      }
+      res.json(customers);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch customers" });
+    }
+  });
+
+  app.post("/api/customers", (req, res) => {
+    const { name, phone, email, address } = req.body;
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    try {
+      const info = db.prepare(`
+        INSERT INTO customers (name, phone, email, address) 
+        VALUES (?, ?, ?, ?)
+      `).run(name, phone, email, address);
+      logEdit('customers', Number(info.lastInsertRowid), 'CREATE', `Customer ${name} added`, getUsername(req));
+      res.json({ id: Number(info.lastInsertRowid), name, phone, email, address });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create customer" });
     }
   });
 
