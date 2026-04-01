@@ -2172,8 +2172,17 @@ export default function App() {
   const alertSound = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    alertSound.current = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-urgent-simple-alarm-loop-2992.mp3');
-    alertSound.current.volume = 1.0;
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/989/989-preview.mp3');
+    audio.volume = 1.0;
+    audio.preload = 'auto';
+    
+    audio.addEventListener('error', (e) => {
+      console.error("Audio failed to load, trying fallback...", e);
+      // Fallback to a different stable source if the first one fails
+      audio.src = 'https://www.soundjay.com/buttons/sounds/beep-07.mp3';
+    });
+
+    alertSound.current = audio;
   }, []);
 
   const playAlertSound = () => {
