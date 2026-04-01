@@ -36,10 +36,12 @@ import {
   Store,
   X,
   FileText,
-  FileSpreadsheet
+  FileSpreadsheet,
+  TrendingUp,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod, Customer } from './types';
+import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod, Customer, InventoryReportData } from './types';
 
 interface StockAdjustment {
   id: number;
@@ -284,6 +286,7 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
     { id: 'inventory', icon: Package, label: 'Inventory' },
+    { id: 'inventory_report', icon: FileText, label: 'Inventory Report' },
     { id: 'customers', icon: User, label: 'Customers' },
     { id: 'reports', icon: BarChart3, label: 'Reports' },
   ];
@@ -637,6 +640,153 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
         <p className="mt-2 text-[10px]">Printed by: {settings.company_name}</p>
       </div>
     </div>
+  );
+};
+
+// --- Inventory Report Component ---
+const InventoryReport = ({ data, settings, categories }: { data: InventoryReportData | null, settings: Settings, categories: Category[] }) => {
+  const [filterCategory, setFilterCategory] = useState<number | ''>('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'low' | 'out'>('all');
+
+  if (!data) return <div className="p-8 text-center text-slate-500">Loading inventory report...</div>;
+
+  const filteredItems = data.items.filter(item => {
+    const matchesCategory = filterCategory === '' || item.category_id === filterCategory;
+    const matchesStatus = filterStatus === 'all' || 
+                         (filterStatus === 'low' && item.status === 'low') ||
+                         (filterStatus === 'out' && item.status === 'out');
+    return matchesCategory && matchesStatus;
+  });
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-6 lg:space-y-8 p-4 lg:p-8 max-w-7xl mx-auto"
+    >
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl lg:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Inventory Report</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Detailed stock levels, valuation, and profit analysis</p>
+        </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <select 
+            className="input text-sm py-2"
+            value={filterCategory}
+            onChange={(e) => setFilterCategory(e.target.value ? Number(e.target.value) : '')}
+          >
+            <option value="">All Categories</option>
+            {categories.map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
+          <select 
+            className="input text-sm py-2"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as any)}
+          >
+            <option value="all">All Status</option>
+            <option value="low">Low Stock</option>
+            <option value="out">Out of Stock</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+        <div className="card p-6 bg-indigo-600 text-white">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-white/20 rounded-lg">
+              <Package size={24} />
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Total Valuation</span>
+          </div>
+          <div className="text-2xl font-black">{settings.currency || '₱'}{data.summary.total_valuation.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          <div className="text-xs mt-1 opacity-80">{data.summary.total_stock} items in stock</div>
+        </div>
+
+        <div className="card p-6 bg-emerald-600 text-white">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-white/20 rounded-lg">
+              <TrendingUp size={24} />
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Potential Profit</span>
+          </div>
+          <div className="text-2xl font-black">{settings.currency || '₱'}{data.summary.total_potential_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          <div className="text-xs mt-1 opacity-80">Based on current stock levels</div>
+        </div>
+
+        <div className="card p-6 bg-amber-500 text-white">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-white/20 rounded-lg">
+              <ShieldAlert size={24} />
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Low Stock</span>
+          </div>
+          <div className="text-2xl font-black">{data.summary.low_stock_count}</div>
+          <div className="text-xs mt-1 opacity-80">Items below threshold</div>
+        </div>
+
+        <div className="card p-6 bg-red-600 text-white">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-white/20 rounded-lg">
+              <AlertCircle size={24} />
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Out of Stock</span>
+          </div>
+          <div className="text-2xl font-black">{data.summary.out_of_stock_count}</div>
+          <div className="text-xs mt-1 opacity-80">Items with zero stock</div>
+        </div>
+      </div>
+
+      {/* Detailed Table */}
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[800px]">
+            <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+              <tr>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Item Details</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Stock</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Cost Price</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Sale Price</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Valuation</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Pot. Profit</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+              {filteredItems.map(item => (
+                <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors text-sm">
+                  <td className="px-6 py-4">
+                    <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
+                    <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{item.sku || 'No SKU'} • {item.category_name || 'Uncategorized'}</div>
+                  </td>
+                  <td className="px-6 py-4 text-center font-bold">{item.stock}</td>
+                  <td className="px-6 py-4 text-right text-slate-500">{settings.currency || '₱'}{item.cost_price.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-right text-slate-900 dark:text-white">{settings.currency || '₱'}{item.price.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-indigo-600">{settings.currency || '₱'}{item.valuation.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-emerald-600">{settings.currency || '₱'}{item.potential_profit.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-center">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                      item.status === 'normal' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
+                      item.status === 'low' ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400' :
+                      'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                    }`}>
+                      {item.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredItems.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-500">No items found matching the selected filters.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </motion.div>
   );
 };
 
@@ -1789,6 +1939,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ username: string, role: string, branch_id?: number } | null>(null);
   const [activeTab, setActiveTab] = useState('pos');
+  const [inventoryReportData, setInventoryReportData] = useState<InventoryReportData | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -1818,7 +1969,7 @@ export default function App() {
   const [showPrintCopiesModal, setShowPrintCopiesModal] = useState(false);
 
   // Inventory State
-  const [newItem, setNewItem] = useState({ name: '', price: '', category_id: '', sku: '', stock: '', image_url: '', low_stock_threshold: '5' });
+  const [newItem, setNewItem] = useState({ name: '', price: '', cost_price: '', category_id: '', sku: '', stock: '', image_url: '', low_stock_threshold: '5' });
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [newCategory, setNewCategory] = useState('');
   const [adjustStockItem, setAdjustStockItem] = useState<Item | null>(null);
@@ -2020,6 +2171,18 @@ export default function App() {
     }
   }, [customerSearchQuery]);
 
+  const fetchInventoryReport = async () => {
+    try {
+      const res = await fetch('/api/reports/inventory');
+      if (res.ok) {
+        const data = await res.json();
+        setInventoryReportData(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch inventory report:", err);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
     if (isAuthenticated) {
@@ -2028,8 +2191,11 @@ export default function App() {
       fetchPaymentMethods();
       fetchBranches();
       fetchPendingOrders();
+      if (activeTab === 'inventory_report') {
+        fetchInventoryReport();
+      }
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, activeTab]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -2470,6 +2636,7 @@ export default function App() {
 
   const handleAddItem = async () => {
     const price = parseFloat(newItem.price);
+    const costPrice = parseFloat(newItem.cost_price) || 0;
     const stock = parseInt(newItem.stock) || 0;
     const threshold = parseInt(newItem.low_stock_threshold) || 5;
     
@@ -2488,6 +2655,7 @@ export default function App() {
         body: JSON.stringify({
           ...newItem,
           price: price,
+          cost_price: costPrice,
           category_id: newItem.category_id ? parseInt(newItem.category_id) : null,
           stock: stock,
           image_url: newItem.image_url,
@@ -2510,6 +2678,7 @@ export default function App() {
   const handleUpdateItem = async () => {
     if (!editingItem) return;
     const price = parseFloat(editingItem.price.toString());
+    const costPrice = parseFloat(editingItem.cost_price?.toString() || '0');
     const stock = parseInt(editingItem.stock.toString());
     const threshold = parseInt(editingItem.low_stock_threshold?.toString() || '5');
     
@@ -2528,6 +2697,7 @@ export default function App() {
         body: JSON.stringify({
           ...editingItem,
           price: price,
+          cost_price: costPrice,
           category_id: editingItem.category_id ? parseInt(editingItem.category_id.toString()) : null,
           stock: stock,
           image_url: editingItem.image_url,
@@ -3285,6 +3455,16 @@ export default function App() {
                         />
                       </div>
                       <div>
+                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Cost Price ({settings.currency || '₱'})</label>
+                        <input 
+                          type="number" 
+                          className="input" 
+                          placeholder="0.00" 
+                          value={newItem.cost_price}
+                          onChange={e => setNewItem({...newItem, cost_price: e.target.value})}
+                        />
+                      </div>
+                      <div>
                         <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Category</label>
                         <select 
                           className="input"
@@ -3359,7 +3539,8 @@ export default function App() {
                           <tr>
                             <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Item</th>
                             <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Category</th>
-                            <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Price</th>
+                            <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Cost</th>
+                            <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Price</th>
                             <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Stock</th>
                           </tr>
                         </thead>
@@ -3378,7 +3559,8 @@ export default function App() {
                                 </div>
                               </td>
                               <td className="px-6 py-4 text-slate-600 dark:text-slate-300 whitespace-nowrap">{item.category_name || '-'}</td>
-                              <td className="px-6 py-4 font-bold text-indigo-600 whitespace-nowrap">{settings.currency || '₱'}{item.price.toFixed(2)}</td>
+                              <td className="px-6 py-4 text-right text-slate-500 whitespace-nowrap">{settings.currency || '₱'}{item.cost_price.toFixed(2)}</td>
+                              <td className="px-6 py-4 text-right font-bold text-indigo-600 whitespace-nowrap">{settings.currency || '₱'}{item.price.toFixed(2)}</td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex items-center justify-end gap-2">
                                   <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
@@ -3462,6 +3644,10 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          )}
+
+          {activeTab === 'inventory_report' && (
+            <InventoryReport data={inventoryReportData} settings={settings} categories={categories} />
           )}
 
           {activeTab === 'customers' && (
@@ -3815,6 +4001,15 @@ export default function App() {
                     className="input w-full" 
                     value={editingItem.price}
                     onChange={e => setEditingItem({...editingItem, price: parseFloat(e.target.value) || 0})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Cost Price</label>
+                  <input 
+                    type="number" 
+                    className="input w-full" 
+                    value={editingItem.cost_price || 0}
+                    onChange={e => setEditingItem({...editingItem, cost_price: parseFloat(e.target.value) || 0})}
                   />
                 </div>
                 <div>

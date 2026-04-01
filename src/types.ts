@@ -7,6 +7,7 @@ export interface Item {
   id: number;
   name: string;
   price: number;
+  cost_price: number;
   category_id: number | null;
   category_name?: string;
   sku: string;
@@ -77,9 +78,29 @@ export interface DayEndReport {
     name: string;
     total_quantity: number;
     total_revenue: number;
+    total_cogs: number;
+    total_profit: number;
   }[];
   categories: {
     name: string;
     total_revenue: number;
+    total_cogs: number;
+    total_profit: number;
   }[];
+}
+
+export interface InventoryReportData {
+  items: (Item & { 
+    valuation: number; 
+    potential_profit: number;
+    status: 'normal' | 'low' | 'out';
+  })[];
+  summary: {
+    total_items: number;
+    total_stock: number;
+    total_valuation: number;
+    total_potential_profit: number;
+    low_stock_count: number;
+    out_of_stock_count: number;
+  };
 }

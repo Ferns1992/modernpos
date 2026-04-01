@@ -55,6 +55,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     price REAL NOT NULL,
+    cost_price REAL DEFAULT 0,
     category_id INTEGER,
     sku TEXT UNIQUE,
     stock INTEGER DEFAULT 0,
@@ -86,6 +87,16 @@ if (!hasImageUrl) {
 const hasLowStockThreshold = itemsTableInfo.some((col: any) => col.name === 'low_stock_threshold');
 if (!hasLowStockThreshold) {
   db.prepare("ALTER TABLE items ADD COLUMN low_stock_threshold INTEGER DEFAULT 5").run();
+}
+const hasCostPrice = itemsTableInfo.some((col: any) => col.name === 'cost_price');
+if (!hasCostPrice) {
+  db.prepare("ALTER TABLE items ADD COLUMN cost_price REAL DEFAULT 0").run();
+}
+
+const saleItemsTableInfo = db.prepare("PRAGMA table_info(sale_items)").all();
+const hasCostPriceAtSale = saleItemsTableInfo.some((col: any) => col.name === 'cost_price_at_sale');
+if (!hasCostPriceAtSale) {
+  db.prepare("ALTER TABLE sale_items ADD COLUMN cost_price_at_sale REAL DEFAULT 0").run();
 }
 
 if (!hasSubtotal) {
@@ -156,6 +167,7 @@ db.exec(`
     item_id INTEGER,
     quantity INTEGER NOT NULL,
     price_at_sale REAL NOT NULL,
+    cost_price_at_sale REAL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items(id),
     FOREIGN KEY (sale_id) REFERENCES sales(id)
   );
@@ -459,18 +471,18 @@ async function startServer() {
   });
 
   app.post("/api/items", (req, res) => {
-    const { name, price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
+    const { name, price, cost_price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
     
     if (!name || typeof price !== 'number' || isNaN(price)) {
       return res.status(400).json({ error: "Invalid item data. Name and valid price are required." });
     }
 
     try {
-      const info = db.prepare("INSERT INTO items (name, price, category_id, sku, stock, image_url, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(name, price, category_id, sku, stock, image_url || null, low_stock_threshold || 5);
+      const info = db.prepare("INSERT INTO items (name, price, cost_price, category_id, sku, stock, image_url, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(name, price, cost_price || 0, category_id, sku, stock, image_url || null, low_stock_threshold || 5);
       const itemId = Number(info.lastInsertRowid);
       logEdit('items', itemId, 'CREATE', `Item ${name} added`, getUsername(req));
-      res.json({ id: itemId, name, price, category_id, sku, stock, image_url, low_stock_threshold });
+      res.json({ id: itemId, name, price, cost_price, category_id, sku, stock, image_url, low_stock_threshold });
     } catch (err) {
       console.error("Error adding item:", err);
       res.status(400).json({ error: "SKU must be unique or database error occurred" });
@@ -478,7 +490,7 @@ async function startServer() {
   });
 
   app.put("/api/items/:id", (req, res) => {
-    const { name, price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
+    const { name, price, cost_price, category_id, sku, stock, image_url, low_stock_threshold } = req.body;
     const { id } = req.params;
 
     if (!name || typeof price !== 'number' || isNaN(price)) {
@@ -489,12 +501,13 @@ async function startServer() {
       const oldItem = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as any;
       if (!oldItem) return res.status(404).json({ error: "Item not found" });
 
-      db.prepare("UPDATE items SET name = ?, price = ?, category_id = ?, sku = ?, stock = ?, image_url = ?, low_stock_threshold = ? WHERE id = ?")
-        .run(name, price, category_id, sku, stock, image_url || null, low_stock_threshold, id);
+      db.prepare("UPDATE items SET name = ?, price = ?, cost_price = ?, category_id = ?, sku = ?, stock = ?, image_url = ?, low_stock_threshold = ? WHERE id = ?")
+        .run(name, price, cost_price || 0, category_id, sku, stock, image_url || null, low_stock_threshold, id);
       
       const changes: string[] = [];
       if (oldItem.name !== name) changes.push(`Name: '${oldItem.name}' -> '${name}'`);
       if (oldItem.price !== price) changes.push(`Price: ${oldItem.price} -> ${price}`);
+      if (oldItem.cost_price !== cost_price) changes.push(`Cost Price: ${oldItem.cost_price} -> ${cost_price}`);
       if (oldItem.category_id !== category_id) changes.push(`Category: ${oldItem.category_id} -> ${category_id}`);
       if (oldItem.sku !== sku) changes.push(`SKU: '${oldItem.sku}' -> '${sku}'`);
       if (oldItem.stock !== stock) changes.push(`Stock: ${oldItem.stock} -> ${stock}`);
@@ -582,8 +595,12 @@ async function startServer() {
           throw new Error(`Invalid item data in cart for item: ${item.name || 'Unknown'}`);
         }
         
-        db.prepare("INSERT INTO sale_items (sale_id, item_id, quantity, price_at_sale) VALUES (?, ?, ?, ?)")
-          .run(saleId, item.id, item.quantity, item.price);
+        // Fetch current cost price
+        const currentItem = db.prepare("SELECT cost_price FROM items WHERE id = ?").get(item.id) as any;
+        const costPriceAtSale = currentItem?.cost_price || 0;
+
+        db.prepare("INSERT INTO sale_items (sale_id, item_id, quantity, price_at_sale, cost_price_at_sale) VALUES (?, ?, ?, ?, ?)")
+          .run(saleId, item.id, item.quantity, item.price, costPriceAtSale);
         
         // Update stock
         db.prepare("UPDATE items SET stock = stock - ? WHERE id = ?")
@@ -749,6 +766,45 @@ async function startServer() {
   });
 
   // Reports
+  app.get("/api/reports/inventory", (req, res) => {
+    try {
+      const items = db.prepare(`
+        SELECT items.*, categories.name as category_name 
+        FROM items 
+        LEFT JOIN categories ON items.category_id = categories.id
+      `).all() as any[];
+
+      const itemsWithValuation = items.map(item => {
+        const valuation = (item.stock || 0) * (item.cost_price || 0);
+        const potential_profit = (item.stock || 0) * ((item.price || 0) - (item.cost_price || 0));
+        let status = 'normal';
+        if (item.stock <= 0) status = 'out';
+        else if (item.stock <= (item.low_stock_threshold || 5)) status = 'low';
+
+        return {
+          ...item,
+          valuation,
+          potential_profit,
+          status
+        };
+      });
+
+      const summary = {
+        total_items: items.length,
+        total_stock: items.reduce((sum, item) => sum + (item.stock || 0), 0),
+        total_valuation: itemsWithValuation.reduce((sum, item) => sum + item.valuation, 0),
+        total_potential_profit: itemsWithValuation.reduce((sum, item) => sum + item.potential_profit, 0),
+        low_stock_count: itemsWithValuation.filter(item => item.status === 'low').length,
+        out_of_stock_count: itemsWithValuation.filter(item => item.status === 'out').length,
+      };
+
+      res.json({ items: itemsWithValuation, summary });
+    } catch (err) {
+      console.error("Error fetching inventory report:", err);
+      res.status(500).json({ error: "Failed to fetch inventory report" });
+    }
+  });
+
   app.get("/api/reports/sales", (req, res) => {
     const { type, date, branch_id } = req.query;
     const targetDate = (date as string) || new Date().toISOString().split('T')[0];
@@ -822,7 +878,9 @@ async function startServer() {
         SELECT 
           items.name,
           COALESCE(SUM(sale_items.quantity), 0) as total_quantity,
-          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue
+          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue,
+          COALESCE(SUM(sale_items.quantity * sale_items.cost_price_at_sale), 0) as total_cogs,
+          COALESCE(SUM(sale_items.quantity * (sale_items.price_at_sale - sale_items.cost_price_at_sale)), 0) as total_profit
         FROM sale_items
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
@@ -834,7 +892,9 @@ async function startServer() {
       const categories = db.prepare(`
         SELECT 
           categories.name,
-          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue
+          COALESCE(SUM(sale_items.quantity * sale_items.price_at_sale), 0) as total_revenue,
+          COALESCE(SUM(sale_items.quantity * sale_items.cost_price_at_sale), 0) as total_cogs,
+          COALESCE(SUM(sale_items.quantity * (sale_items.price_at_sale - sale_items.cost_price_at_sale)), 0) as total_profit
         FROM sale_items
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
