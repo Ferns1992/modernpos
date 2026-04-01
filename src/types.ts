@@ -19,6 +19,13 @@ export interface CartItem extends Item {
   quantity: number;
 }
 
+export interface Branch {
+  id: number;
+  name: string;
+  address?: string;
+  contact?: string;
+}
+
 export interface Sale {
   id: number;
   subtotal: number;
@@ -32,6 +39,12 @@ export interface Sale {
   customer_id?: number | null;
   customer_name?: string;
   customer_phone?: string;
+  customer_address?: string;
+  branch_id?: number | null;
+  branch_name?: string;
+  completed_by?: string;
+  completed_at_branch_id?: number | null;
+  completed_at_branch_name?: string;
 }
 
 export interface Customer {

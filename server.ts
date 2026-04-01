@@ -28,12 +28,22 @@ try {
 
 // Initialize Database
 db.exec(`
+  CREATE TABLE IF NOT EXISTS branches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    address TEXT,
+    contact TEXT,
+    vat_id TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT DEFAULT 'cashier',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    branch_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (branch_id) REFERENCES branches(id)
   );
 
   CREATE TABLE IF NOT EXISTS categories (
@@ -118,6 +128,25 @@ try {
 
 try {
   db.prepare("ALTER TABLE sales ADD COLUMN customer_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE users ADD COLUMN branch_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN branch_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN completed_by TEXT").run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN completed_at_branch_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE branches ADD COLUMN vat_id TEXT").run();
 } catch (e) {}
 
 db.exec(`
@@ -260,7 +289,7 @@ async function startServer() {
 
   // Auth
   app.post("/api/auth/register", (req, res) => {
-    const { username, password, role } = req.body;
+    const { username, password, role, branch_id } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: "Username and password are required" });
     }
@@ -268,9 +297,9 @@ async function startServer() {
     try {
       const passwordHash = hashPassword(password);
       const userRole = role || 'cashier';
-      const info = db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run(username, passwordHash, userRole);
+      const info = db.prepare("INSERT INTO users (username, password_hash, role, branch_id) VALUES (?, ?, ?, ?)").run(username, passwordHash, userRole, branch_id || null);
       logEdit('users', Number(info.lastInsertRowid), 'CREATE', `User ${username} created with role ${userRole}`, getUsername(req));
-      res.json({ id: Number(info.lastInsertRowid), username, role: userRole, success: true });
+      res.json({ id: Number(info.lastInsertRowid), username, role: userRole, branch_id, success: true });
     } catch (err) {
       res.status(400).json({ error: "Username already exists" });
     }
@@ -292,16 +321,62 @@ async function startServer() {
     const user = db.prepare("SELECT * FROM users WHERE username = ? AND password_hash = ?").get(username, passwordHash) as any;
 
     if (user) {
-      res.json({ success: true, username: user.username, role: user.role });
+      res.json({ success: true, username: user.username, role: user.role, branch_id: user.branch_id });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
     }
   });
   
+  // Branches
+  app.get("/api/branches", (req, res) => {
+    try {
+      const branches = db.prepare("SELECT * FROM branches").all();
+      res.json(branches);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch branches" });
+    }
+  });
+
+  app.post("/api/branches", (req, res) => {
+    const { name, address, contact, vat_id } = req.body;
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    try {
+      const info = db.prepare("INSERT INTO branches (name, address, contact, vat_id) VALUES (?, ?, ?, ?)").run(name, address || null, contact || null, vat_id || null);
+      logEdit('branches', Number(info.lastInsertRowid), 'CREATE', `Branch ${name} added`, getUsername(req));
+      res.json({ id: Number(info.lastInsertRowid), name, address, contact, vat_id });
+    } catch (err) {
+      res.status(400).json({ error: "Branch already exists" });
+    }
+  });
+
+  app.put("/api/branches/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, address, contact, vat_id } = req.body;
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    try {
+      db.prepare("UPDATE branches SET name = ?, address = ?, contact = ?, vat_id = ? WHERE id = ?").run(name, address || null, contact || null, vat_id || null, id);
+      logEdit('branches', Number(id), 'UPDATE', `Branch ${name} updated`, getUsername(req));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update branch" });
+    }
+  });
+
+  app.delete("/api/branches/:id", (req, res) => {
+    const { id } = req.params;
+    try {
+      db.prepare("DELETE FROM branches WHERE id = ?").run(id);
+      logEdit('branches', Number(id), 'DELETE', `Branch ${id} deleted`, getUsername(req));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete branch" });
+    }
+  });
+
   // Users
   app.get("/api/users", (req, res) => {
     try {
-      const users = db.prepare("SELECT id, username, role, created_at FROM users").all();
+      const users = db.prepare("SELECT id, username, role, branch_id, created_at FROM users").all();
       res.json(users);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch users" });
@@ -310,17 +385,17 @@ async function startServer() {
 
   app.put("/api/users/:id", (req, res) => {
     const { id } = req.params;
-    const { password } = req.body;
+    const { password, branch_id } = req.body;
     
-    if (!password) {
-      return res.status(400).json({ error: "Password is required" });
-    }
-
     try {
       const user = db.prepare("SELECT username FROM users WHERE id = ?").get(id) as any;
-      const passwordHash = hashPassword(password);
-      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, id);
-      logEdit('users', Number(id), 'UPDATE', `User ${user?.username || id} password updated`, getUsername(req));
+      if (password) {
+        const passwordHash = hashPassword(password);
+        db.prepare("UPDATE users SET password_hash = ?, branch_id = ? WHERE id = ?").run(passwordHash, branch_id || null, id);
+      } else {
+        db.prepare("UPDATE users SET branch_id = ? WHERE id = ?").run(branch_id || null, id);
+      }
+      logEdit('users', Number(id), 'UPDATE', `User ${user?.username || id} updated`, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to update user" });
@@ -479,7 +554,7 @@ async function startServer() {
 
   // Sales
   app.post("/api/sales", (req, res) => {
-    const { items: saleItems, subtotal, tax, total, payment_method, discount, timestamp, customer_id } = req.body;
+    const { items: saleItems, subtotal, tax, total, payment_method, discount, timestamp, customer_id, branch_id, status } = req.body;
     
     if (!saleItems || !Array.isArray(saleItems) || saleItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
@@ -491,15 +566,16 @@ async function startServer() {
     
     const transaction = db.transaction(() => {
       let saleInfo;
+      const saleStatus = status || 'completed';
       if (timestamp) {
-        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, timestamp, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .run(subtotal, tax, total, payment_method, discount || 0, timestamp, customer_id || null);
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, timestamp, customer_id, branch_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0, timestamp, customer_id || null, branch_id || null, saleStatus);
       } else {
-        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, customer_id) VALUES (?, ?, ?, ?, ?, ?)")
-          .run(subtotal, tax, total, payment_method, discount || 0, customer_id || null);
+        saleInfo = db.prepare("INSERT INTO sales (subtotal, tax, total, payment_method, discount, customer_id, branch_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(subtotal, tax, total, payment_method, discount || 0, customer_id || null, branch_id || null, saleStatus);
       }
       const saleId = Number(saleInfo.lastInsertRowid);
-      logEdit('sales', saleId, 'CREATE', `Sale ${saleId} created with total ${total}`, getUsername(req));
+      logEdit('sales', saleId, 'CREATE', `Sale ${saleId} created with total ${total} and status ${saleStatus}`, getUsername(req));
 
       for (const item of saleItems) {
         if (!item.id || isNaN(item.quantity) || isNaN(item.price)) {
@@ -612,9 +688,69 @@ async function startServer() {
     }
   });
 
+  // Pending Orders
+  app.get("/api/orders/pending", (req, res) => {
+    const branchId = req.query.branch_id;
+    try {
+      let query = "SELECT s.*, c.name as customer_name, c.address as customer_address FROM sales s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.status = 'pending'";
+      const params: any[] = [];
+      
+      if (branchId) {
+        query += " AND s.branch_id = ?";
+        params.push(branchId);
+      }
+      
+      query += " ORDER BY s.timestamp ASC";
+      
+      const pendingSales = db.prepare(query).all(...params) as any[];
+      
+      // Fetch items for each sale
+      for (const sale of pendingSales) {
+        sale.items = db.prepare(`
+          SELECT si.*, i.name 
+          FROM sale_items si 
+          JOIN items i ON si.item_id = i.id 
+          WHERE si.sale_id = ?
+        `).all(sale.id);
+      }
+      
+      res.json(pendingSales);
+    } catch (err) {
+      console.error("Error fetching pending orders:", err);
+      res.status(500).json({ error: "Failed to fetch pending orders" });
+    }
+  });
+
+  app.put("/api/orders/:id/status", (req, res) => {
+    const { id } = req.params;
+    const { status, completed_by, branch_id } = req.body;
+    
+    if (!status) return res.status(400).json({ error: "Status is required" });
+    
+    try {
+      if (completed_by) {
+        db.prepare("UPDATE sales SET status = ?, completed_by = ?, completed_at_branch_id = ? WHERE id = ?").run(status, completed_by, branch_id || null, id);
+      } else {
+        db.prepare("UPDATE sales SET status = ? WHERE id = ?").run(status, id);
+      }
+      
+      let branchName = "Unknown Branch";
+      if (branch_id) {
+        const branch = db.prepare("SELECT name FROM branches WHERE id = ?").get(branch_id) as any;
+        if (branch) branchName = branch.name;
+      }
+
+      logEdit('sales', Number(id), 'UPDATE_STATUS', `Sale ${id} status updated to ${status} by ${completed_by || getUsername(req)} at ${branchName}`, getUsername(req));
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error updating order status:", err);
+      res.status(500).json({ error: "Failed to update order status" });
+    }
+  });
+
   // Reports
   app.get("/api/reports/sales", (req, res) => {
-    const { type, date } = req.query;
+    const { type, date, branch_id } = req.query;
     const targetDate = (date as string) || new Date().toISOString().split('T')[0];
 
     let timeFilter;
@@ -626,14 +762,24 @@ async function startServer() {
       timeFilter = "date(timestamp) = date(?)";
     }
 
+    let branchFilter = "";
+    const params: any[] = [targetDate];
+    if (branch_id) {
+      branchFilter = " AND s.branch_id = ?";
+      params.push(branch_id);
+    }
+
     try {
       const sales = db.prepare(`
-        SELECT s.*, c.name as customer_name, c.phone as customer_phone 
+        SELECT s.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+               b.name as branch_name, cb.name as completed_at_branch_name
         FROM sales s
         LEFT JOIN customers c ON s.customer_id = c.id
-        WHERE ${timeFilter}
+        LEFT JOIN branches b ON s.branch_id = b.id
+        LEFT JOIN branches cb ON s.completed_at_branch_id = cb.id
+        WHERE ${timeFilter}${branchFilter}
         ORDER BY s.timestamp DESC
-      `).all(targetDate);
+      `).all(...params);
       res.json(sales);
     } catch (err) {
       console.error("Error fetching sales report:", err);
@@ -642,7 +788,7 @@ async function startServer() {
   });
 
   app.get("/api/reports/summary", (req, res) => {
-    const { type, date } = req.query;
+    const { type, date, branch_id } = req.query;
     const targetDate = (date as string) || new Date().toISOString().split('T')[0];
     
     let timeFilter;
@@ -654,6 +800,13 @@ async function startServer() {
       timeFilter = "date(timestamp) = date(?)";
     }
 
+    let branchFilter = "";
+    const params: any[] = [targetDate];
+    if (branch_id) {
+      branchFilter = " AND sales.branch_id = ?";
+      params.push(branch_id);
+    }
+
     try {
       const summary = db.prepare(`
         SELECT 
@@ -661,9 +814,9 @@ async function startServer() {
           COALESCE(SUM(CASE WHEN status = 'completed' THEN total ELSE 0 END), 0) as total_sales,
           payment_method
         FROM sales 
-        WHERE ${timeFilter}
+        WHERE ${timeFilter.replace(/timestamp/g, 'timestamp')}${branchFilter.replace(/sales\./g, '')}
         GROUP BY payment_method
-      `).all(targetDate);
+      `).all(...params);
       
       const items = db.prepare(`
         SELECT 
@@ -673,10 +826,10 @@ async function startServer() {
         FROM sale_items
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
-        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'
+        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'${branchFilter}
         GROUP BY items.id
         ORDER BY total_revenue DESC
-      `).all(targetDate);
+      `).all(...params);
 
       const categories = db.prepare(`
         SELECT 
@@ -686,10 +839,10 @@ async function startServer() {
         JOIN sales ON sale_items.sale_id = sales.id
         JOIN items ON sale_items.item_id = items.id
         LEFT JOIN categories ON items.category_id = categories.id
-        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'
+        WHERE ${timeFilter.replace(/timestamp/g, 'sales.timestamp')} AND sales.status = 'completed'${branchFilter}
         GROUP BY categories.id
         ORDER BY total_revenue DESC
-      `).all(targetDate);
+      `).all(...params);
 
       res.json({ summary, items, categories });
     } catch (err) {
@@ -769,6 +922,55 @@ async function startServer() {
       res.json({ id: Number(info.lastInsertRowid), name, phone, email, address });
     } catch (err) {
       res.status(500).json({ error: "Failed to create customer" });
+    }
+  });
+
+  app.put("/api/customers/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, phone, email, address } = req.body;
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    try {
+      db.prepare(`
+        UPDATE customers SET name = ?, phone = ?, email = ?, address = ? 
+        WHERE id = ?
+      `).run(name, phone, email, address, id);
+      logEdit('customers', Number(id), 'UPDATE', `Customer ${name} updated`, getUsername(req));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update customer" });
+    }
+  });
+
+  app.get("/api/customers/:id/stats", (req, res) => {
+    const { id } = req.params;
+    try {
+      const stats = db.prepare(`
+        SELECT 
+          COUNT(*) as total_orders,
+          SUM(total) as total_spent,
+          COUNT(DISTINCT branch_id) as branch_count
+        FROM sales 
+        WHERE customer_id = ?
+      `).get(id);
+      res.json(stats || { total_orders: 0, total_spent: 0, branch_count: 0 });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch customer stats" });
+    }
+  });
+
+  app.get("/api/customers/:id/sales", (req, res) => {
+    const { id } = req.params;
+    try {
+      const sales = db.prepare(`
+        SELECT s.*, b.name as branch_name 
+        FROM sales s
+        LEFT JOIN branches b ON s.branch_id = b.id
+        WHERE s.customer_id = ?
+        ORDER BY s.timestamp DESC
+      `).all(id);
+      res.json(sales);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch customer sales" });
     }
   });
 

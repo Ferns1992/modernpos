@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import Papa from 'papaparse';
 import { 
   LayoutDashboard, 
   ShoppingCart, 
@@ -28,7 +31,12 @@ import {
   Phone,
   Mail,
   MapPin,
-  X
+  Bell,
+  CheckCircle2,
+  Store,
+  X,
+  FileText,
+  FileSpreadsheet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Item, CartItem, Sale, DayEndReport, PaymentMethod, Customer } from './types';
@@ -52,6 +60,9 @@ interface Settings {
   vat_id: string;
   currency: string;
   timezone: string;
+  thermal_paper_size: '58mm' | '80mm';
+  thermal_font_style: 'normal' | 'bold' | 'condensed';
+  thermal_print_density: number;
 }
 
 const AuditLogs = () => {
@@ -183,8 +194,16 @@ const PrintStyles = () => (
         overflow: visible !important;
         opacity: 1 !important;
       }
+      .page-break { page-break-after: always; }
       #root { display: block !important; height: auto !important; overflow: visible !important; }
+      
+      /* Thermal Printer Specific Sizing */
+      .receipt-80mm { width: 80mm !important; }
+      .receipt-58mm { width: 58mm !important; }
     }
+    /* Screen Display Sizing */
+    .receipt-80mm { width: 300px; }
+    .receipt-58mm { width: 220px; }
     /* Hide on screen but keep in DOM for React to render */
     .print-only { 
       position: fixed; 
@@ -248,7 +267,7 @@ const ThemeToggle = () => {
   );
 };
 
-const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isOnline, pendingSalesCount, isSyncing, syncPendingSales, isOpen, setIsOpen }: { 
+const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isOnline, pendingSalesCount, isSyncing, syncPendingSales, isOpen, setIsOpen, newOrdersCount }: { 
   activeTab: string, 
   setActiveTab: (tab: string) => void, 
   onLogout: () => void, 
@@ -259,13 +278,19 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
   isSyncing: boolean,
   syncPendingSales: () => void,
   isOpen: boolean,
-  setIsOpen: (open: boolean) => void
+  setIsOpen: (open: boolean) => void,
+  newOrdersCount?: number
 }) => {
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
     { id: 'inventory', icon: Package, label: 'Inventory' },
+    { id: 'customers', icon: User, label: 'Customers' },
     { id: 'reports', icon: BarChart3, label: 'Reports' },
   ];
+
+  if (currentUser?.role === 'admin' || currentUser?.role === 'cashier') {
+    menuItems.splice(1, 0, { id: 'pending_orders', icon: Bell, label: 'Pending Orders' });
+  }
 
   if (currentUser?.role === 'admin') {
     menuItems.push({ id: 'admin', icon: Settings, label: 'Admin' });
@@ -325,7 +350,12 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
               }`}
             >
               <item.icon size={20} />
-              {item.label}
+              <span className="flex-1 text-left">{item.label}</span>
+              {item.id === 'pending_orders' && newOrdersCount !== undefined && newOrdersCount > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                  {newOrdersCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -380,37 +410,66 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
 };
 
 // --- Receipt Component ---
-const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], settings: Settings }) => {
-  const now = new Date();
+const Receipt = ({ sale, items, settings, branches = [] }: { sale: any, items: any[], settings: Settings, branches?: any[] }) => {
+  const saleDate = sale.timestamp ? new Date(sale.timestamp) : new Date();
   const taxRate = parseFloat(settings.tax_rate) || 0;
   const currency = settings.currency || '₱';
   
+  const branch = branches.find(b => b.id === sale.branch_id);
+
+  // Thermal Printer settings
+  const paperSize = settings.thermal_paper_size || '80mm';
+  const fontStyle = settings.thermal_font_style || 'normal';
+  const printDensity = settings.thermal_print_density || 3;
+
+  const fontStyleClass = 
+    fontStyle === 'bold' ? 'font-bold' : 
+    fontStyle === 'condensed' ? 'tracking-tighter' : '';
+
+  // Simulate density with opacity and weight
+  const densityStyles = {
+    opacity: printDensity <= 3 ? 0.6 + (printDensity * 0.13) : 1,
+    fontWeight: printDensity > 3 ? (printDensity === 4 ? 600 : 800) : 'inherit'
+  };
+  
   return (
-    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
+    <div 
+      className={`receipt-${paperSize} font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2 ${fontStyleClass}`}
+      style={densityStyles}
+    >
       <div className="text-center mb-2">
         {settings.logo_url && (
           <img src={settings.logo_url} alt="Company Logo" className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />
         )}
-        <h2 className="text-lg font-bold uppercase">{settings.company_name || 'MODERN STORE'}</h2>
-        <p>{settings.address || '123 Business Street, City'}</p>
-        <p>Tel: {settings.contact || '+1 234 567 890'}</p>
-        {settings.vat_id && <p>VAT ID: {settings.vat_id}</p>}
+        <h2 className="text-lg font-bold uppercase">{branch?.name || settings.company_name || 'MODERN STORE'}</h2>
+        <p>{branch?.address || settings.address || '123 Business Street, City'}</p>
+        <p>Tel: {branch?.contact || settings.contact || '+1 234 567 890'}</p>
+        {branch?.vat_id ? <p>VAT ID: {branch.vat_id}</p> : settings.vat_id && <p>VAT ID: {settings.vat_id}</p>}
       </div>
       
       <div className="border-t border-b border-dashed border-black py-2 mb-2">
         <div className="flex justify-between">
           <span>Date:</span>
-          <span>{now.toLocaleDateString()}</span>
+          <span>{saleDate.toLocaleDateString()}</span>
         </div>
         <div className="flex justify-between">
           <span>Time:</span>
-          <span>{now.toLocaleTimeString()}</span>
+          <span>{saleDate.toLocaleTimeString()}</span>
         </div>
         <div className="flex justify-between">
           <span>Receipt:</span>
           <span>#{sale.id || 'TEMP'}</span>
         </div>
       </div>
+
+      {sale.customer_name && (
+        <div className="mb-2 border-b border-dashed border-black pb-2">
+          <p className="font-bold uppercase text-[10px]">Customer Details</p>
+          <p>{sale.customer_name}</p>
+          {sale.customer_phone && <p>Tel: {sale.customer_phone}</p>}
+          {sale.customer_address && <p className="mt-1 italic">{sale.customer_address}</p>}
+        </div>
+      )}
 
       <div className="mb-2">
         <div className="flex justify-between font-bold border-b border-dashed border-black pb-1 mb-1">
@@ -422,7 +481,7 @@ const Receipt = ({ sale, items, settings }: { sale: any, items: CartItem[], sett
           <div key={idx} className="flex justify-between py-1">
             <span className="w-1/2 truncate">{item.name}</span>
             <span className="w-1/4 text-center">x{item.quantity}</span>
-            <span className="w-1/4 text-right">{currency}{(item.price * item.quantity).toFixed(2)}</span>
+            <span className="w-1/4 text-right">{currency}{((item.price_at_sale || item.price || 0) * item.quantity).toFixed(2)}</span>
           </div>
         ))}
       </div>
@@ -468,8 +527,25 @@ const ReportPrint = ({ report, salesHistory, settings, type, date }: { report: D
   const totalTransactions = summary.reduce((a, b) => a + (b.transaction_count || 0), 0);
   const currency = settings.currency || '₱';
 
+  // Thermal Printer settings
+  const paperSize = settings.thermal_paper_size || '80mm';
+  const fontStyle = settings.thermal_font_style || 'normal';
+  const printDensity = settings.thermal_print_density || 3;
+
+  const fontStyleClass = 
+    fontStyle === 'bold' ? 'font-bold' : 
+    fontStyle === 'condensed' ? 'tracking-tighter' : '';
+
+  const densityStyles = {
+    opacity: printDensity <= 3 ? 0.6 + (printDensity * 0.13) : 1,
+    fontWeight: printDensity > 3 ? (printDensity === 4 ? 600 : 800) : 'inherit'
+  };
+
   return (
-    <div className="receipt-80mm font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2">
+    <div 
+      className={`receipt-${paperSize} font-mono text-xs leading-tight text-black bg-white dark:bg-slate-800 p-2 ${fontStyleClass}`}
+      style={densityStyles}
+    >
       <div className="text-center mb-4">
         <h2 className="text-lg font-bold uppercase">{settings.company_name}</h2>
         <p>{settings.address}</p>
@@ -783,6 +859,57 @@ const SettingsPanel = ({ settings, onUpdate, currentUser }: { settings: Settings
             </div>
           </div>
 
+          <div className="pt-6 border-t border-slate-100 dark:border-slate-700">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-4">Thermal Printer Configuration</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Paper Size</label>
+                <select 
+                  name="thermal_paper_size"
+                  className="input w-full text-sm" 
+                  value={formData.thermal_paper_size || '80mm'}
+                  onChange={handleChange as any}
+                >
+                  <option value="80mm">80mm (Standard)</option>
+                  <option value="58mm">58mm (Compact)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Font Style</label>
+                <select 
+                  name="thermal_font_style"
+                  className="input w-full text-sm" 
+                  value={formData.thermal_font_style || 'normal'}
+                  onChange={handleChange as any}
+                >
+                  <option value="normal">Normal</option>
+                  <option value="bold">Bold</option>
+                  <option value="condensed">Condensed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Print Density (1-5)</label>
+                <div className="space-y-2">
+                  <input 
+                    type="range" 
+                    name="thermal_print_density"
+                    min="1"
+                    max="5"
+                    step="1"
+                    className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600" 
+                    value={formData.thermal_print_density || 3}
+                    onChange={(e) => setFormData({...formData, thermal_print_density: parseInt(e.target.value)})}
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                    <span>Light</span>
+                    <span>Normal</span>
+                    <span>Dark</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-center gap-4 pt-4 border-t border-slate-100 dark:border-slate-700">
             <button 
               type="submit" 
@@ -807,11 +934,19 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('cashier');
+  const [branchId, setBranchId] = useState<number | ''>('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [users, setUsers] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
+  const [newBranchName, setNewBranchName] = useState('');
+  const [newBranchAddress, setNewBranchAddress] = useState('');
+  const [newBranchContact, setNewBranchContact] = useState('');
+  const [newBranchVatId, setNewBranchVatId] = useState('');
+  const [branchError, setBranchError] = useState('');
   const [editingUser, setEditingUser] = useState<number | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [editBranchId, setEditBranchId] = useState<number | ''>('');
   const [userToDelete, setUserToDelete] = useState<number | null>(null);
 
   // Payment Methods State
@@ -822,7 +957,20 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
   useEffect(() => {
     fetchUsers();
     fetchPaymentMethods();
+    fetchBranches();
   }, []);
+
+  const fetchBranches = async () => {
+    try {
+      const res = await fetch('/api/branches');
+      if (res.ok) {
+        const data = await res.json();
+        setBranches(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch branches");
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -892,6 +1040,51 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
     }
   };
 
+  const handleAddBranch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBranchName.trim()) return;
+    setBranchError('');
+
+    try {
+      const res = await fetch('/api/branches', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
+        body: JSON.stringify({ name: newBranchName, address: newBranchAddress, contact: newBranchContact, vat_id: newBranchVatId }),
+      });
+      
+      if (res.ok) {
+        setNewBranchName('');
+        setNewBranchAddress('');
+        setNewBranchContact('');
+        setNewBranchVatId('');
+        fetchBranches();
+      } else {
+        const data = await res.json();
+        setBranchError(data.error || 'Failed to add branch');
+      }
+    } catch (err) {
+      setBranchError('Network error');
+    }
+  };
+
+  const handleDeleteBranch = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this branch?')) return;
+    try {
+      const res = await fetch(`/api/branches/${id}`, { 
+        method: 'DELETE',
+        headers: { 'X-Username': currentUser?.username || 'System' }
+      });
+      if (res.ok) {
+        fetchBranches();
+      }
+    } catch (err) {
+      console.error("Failed to delete branch");
+    }
+  };
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage('');
@@ -904,7 +1097,7 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
           'Content-Type': 'application/json',
           'X-Username': currentUser?.username || 'System'
         },
-        body: JSON.stringify({ username, password, role }),
+        body: JSON.stringify({ username, password, role, branch_id: branchId || null }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -912,6 +1105,7 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
         setUsername('');
         setPassword('');
         setRole('cashier');
+        setBranchId('');
         fetchUsers();
       } else {
         setError(data.error || 'Failed to create user');
@@ -944,7 +1138,6 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
   };
 
   const handleUpdatePassword = async (id: number) => {
-    if (!newPassword) return;
     try {
       const res = await fetch(`/api/users/${id}`, {
         method: 'PUT',
@@ -952,17 +1145,19 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
           'Content-Type': 'application/json',
           'X-Username': currentUser?.username || 'System'
         },
-        body: JSON.stringify({ password: newPassword }),
+        body: JSON.stringify({ password: newPassword || undefined, branch_id: editBranchId || null }),
       });
       if (res.ok) {
         setEditingUser(null);
         setNewPassword('');
-        alert('Password updated successfully');
+        setEditBranchId('');
+        fetchUsers();
+        alert('User updated successfully');
       } else {
-        alert('Failed to update password');
+        alert('Failed to update user');
       }
     } catch (err) {
-      alert('Error updating password');
+      alert('Error updating user');
     }
   };
 
@@ -1014,7 +1209,21 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
                 onChange={e => setRole(e.target.value)}
               >
                 <option value="cashier">Cashier</option>
+                <option value="callcenter">Call Center</option>
                 <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Branch</label>
+              <select 
+                className="input w-full text-sm" 
+                value={branchId}
+                onChange={e => setBranchId(e.target.value ? Number(e.target.value) : '')}
+              >
+                <option value="">No Branch (Global)</option>
+                {branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
               </select>
             </div>
             
@@ -1032,13 +1241,16 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
               <div key={user.id} className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-indigo-200 dark:hover:border-indigo-900 transition-all">
                 <div>
                   <div className="font-bold text-slate-900 dark:text-white text-sm">{user.username}</div>
-                  <div className={`text-[10px] font-bold uppercase tracking-wider ${user.role === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}>{user.role}</div>
+                  <div className={`text-[10px] font-bold uppercase tracking-wider ${user.role === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                    {user.role} {user.branch_id ? `- ${branches.find(b => b.id === user.branch_id)?.name || 'Unknown Branch'}` : ''}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button 
                     onClick={() => {
                       setEditingUser(user.id);
                       setNewPassword('');
+                      setEditBranchId(user.branch_id || '');
                     }}
                     className="p-2 text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-colors"
                     title="Edit User"
@@ -1058,6 +1270,87 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
             ))}
             {users.length === 0 && <p className="text-slate-500 dark:text-slate-400 text-center py-8 text-sm italic">No users found.</p>}
           </div>
+        </div>
+      </div>
+
+      {/* Branches Section */}
+      <div className="card p-4 lg:p-8">
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+          <MapPin size={24} className="text-indigo-600" />
+          Branches
+        </h2>
+        
+        <form onSubmit={handleAddBranch} className="flex flex-col sm:flex-row gap-3 mb-8 items-end">
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Branch Name</label>
+            <input 
+              type="text" 
+              placeholder="e.g. Downtown Branch" 
+              className="input w-full text-sm"
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Address</label>
+            <input 
+              type="text" 
+              placeholder="e.g. 123 Main St" 
+              className="input w-full text-sm"
+              value={newBranchAddress}
+              onChange={(e) => setNewBranchAddress(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">Contact</label>
+            <input 
+              type="text" 
+              placeholder="e.g. 555-0123" 
+              className="input w-full text-sm"
+              value={newBranchContact}
+              onChange={(e) => setNewBranchContact(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 tracking-wider">VAT ID</label>
+            <input 
+              type="text" 
+              placeholder="e.g. VAT-123456" 
+              className="input w-full text-sm"
+              value={newBranchVatId}
+              onChange={(e) => setNewBranchVatId(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn btn-primary px-6 py-3 text-sm font-bold uppercase tracking-widest whitespace-nowrap">
+            <Plus size={18} className="mr-2" />
+            Add Branch
+          </button>
+        </form>
+
+        {branchError && (
+          <div className="p-4 bg-red-50 text-red-600 rounded-2xl mb-6 text-sm font-bold animate-pulse">
+            {branchError}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {branches.map((branch) => (
+            <div key={branch.id} className="flex items-start justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-indigo-900 transition-all">
+              <div>
+                <span className="font-bold text-slate-700 dark:text-slate-200 capitalize text-sm block">{branch.name}</span>
+                <span className="text-xs text-slate-500 block">{branch.address}</span>
+                <span className="text-xs text-slate-500 block">{branch.contact}</span>
+                {branch.vat_id && <span className="text-xs text-slate-500 block">VAT: {branch.vat_id}</span>}
+              </div>
+              <button 
+                onClick={() => handleDeleteBranch(branch.id)}
+                className="text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20"
+                title="Delete"
+              >
+                <Trash2 size={18} />
+              </button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1132,17 +1425,27 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
       )}
 
       {editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black\/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl dark:shadow-none p-6 max-w-sm w-full">
-            <h3 className="text-lg font-bold mb-4">Change Password</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Enter new password for user.</p>
+            <h3 className="text-lg font-bold mb-4">Edit User</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Update user details.</p>
             <input 
               type="password" 
               className="input w-full mb-4" 
-              placeholder="New Password"
+              placeholder="New Password (leave blank to keep)"
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
             />
+            <select 
+              className="input w-full mb-4 text-sm" 
+              value={editBranchId}
+              onChange={e => setEditBranchId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">No Branch (Global)</option>
+              {branches.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
             <div className="flex gap-3">
               <button 
                 onClick={() => handleUpdatePassword(editingUser)}
@@ -1151,7 +1454,7 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
                 Update
               </button>
               <button 
-                onClick={() => { setEditingUser(null); setNewPassword(''); }}
+                onClick={() => { setEditingUser(null); setNewPassword(''); setEditBranchId(''); }}
                 className="btn btn-secondary flex-1"
               >
                 Cancel
@@ -1161,6 +1464,220 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
         </div>
       )}
     </motion.div>
+  );
+};
+
+// --- Customers Section Component ---
+const CustomersSection = ({ currentUser, settings }: { currentUser: any, settings: Settings }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerStats, setCustomerStats] = useState<any>(null);
+  const [customerSales, setCustomerSales] = useState<Sale[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchCustomers = async (query: string) => {
+    try {
+      const res = await fetch(`/api/customers?search=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomers(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch customers");
+    }
+  };
+
+  useEffect(() => {
+    if (searchQuery.length >= 2) {
+      const timer = setTimeout(() => fetchCustomers(searchQuery), 300);
+      return () => clearTimeout(timer);
+    } else if (searchQuery.length === 0) {
+      fetchCustomers('');
+    }
+  }, [searchQuery]);
+
+  const handleSelectCustomer = async (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setLoading(true);
+    try {
+      const [statsRes, salesRes] = await Promise.all([
+        fetch(`/api/customers/${customer.id}/stats`),
+        fetch(`/api/customers/${customer.id}/sales`)
+      ]);
+      if (statsRes.ok && salesRes.ok) {
+        const stats = await statsRes.json();
+        const sales = await salesRes.json();
+        setCustomerStats(stats);
+        setCustomerSales(sales);
+      }
+    } catch (err) {
+      console.error("Failed to fetch customer details");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-4 lg:p-8 max-w-7xl mx-auto space-y-8">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl lg:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Customer Management</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Track customer sales and branch activity</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Customer List/Search */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card p-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text"
+                placeholder="Search customers..."
+                className="input w-full pl-10"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="max-h-[600px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
+              {customers.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => handleSelectCustomer(c)}
+                  className={`w-full p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors ${selectedCustomer?.id === c.id ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-600' : ''}`}
+                >
+                  <p className="font-bold text-slate-900 dark:text-white">{c.name}</p>
+                  <p className="text-xs text-slate-500">{c.phone || 'No phone'}</p>
+                </button>
+              ))}
+              {customers.length === 0 && (
+                <div className="p-8 text-center text-slate-500">
+                  No customers found
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Customer Details */}
+        <div className="lg:col-span-2 space-y-6">
+          {selectedCustomer ? (
+            <>
+              {/* Stats Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="card p-6 bg-indigo-600 text-white">
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-80 mb-1">Total Sales</p>
+                  <p className="text-2xl font-bold">{settings.currency || '₱'}{customerStats?.total_spent?.toFixed(2) || '0.00'}</p>
+                </div>
+                <div className="card p-6 bg-emerald-600 text-white">
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-80 mb-1">Total Orders</p>
+                  <p className="text-2xl font-bold">{customerStats?.total_orders || 0}</p>
+                </div>
+                <div className="card p-6 bg-amber-600 text-white">
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-80 mb-1">Branches Visited</p>
+                  <p className="text-2xl font-bold">{customerStats?.branch_count || 0}</p>
+                </div>
+              </div>
+
+              {/* Customer Info */}
+              <div className="card p-6">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 rounded-2xl flex items-center justify-center text-indigo-600">
+                    <User size={32} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-900 dark:text-white">{selectedCustomer.name}</h3>
+                    <p className="text-slate-500">{selectedCustomer.email || 'No email'}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="flex items-center gap-3">
+                    <Phone className="text-slate-400" size={18} />
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phone</p>
+                      <p className="text-sm font-medium">{selectedCustomer.phone || 'N/A'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <MapPin className="text-slate-400" size={18} />
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Address</p>
+                      <p className="text-sm font-medium">{selectedCustomer.address || 'N/A'}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sales History */}
+              <div className="card overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+                  <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <History size={18} className="text-indigo-600" />
+                    Sales History
+                  </h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Date</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Branch</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                      {customerSales.map(sale => (
+                        <tr key={sale.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                          <td className="px-6 py-4 text-sm whitespace-nowrap">
+                            {new Date(sale.timestamp).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-medium whitespace-nowrap">
+                            {sale.branch_name || 'Main'}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-bold whitespace-nowrap">
+                            {settings.currency || '₱'}{sale.total.toFixed(2)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                              sale.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                            }`}>
+                              {sale.status.toUpperCase()}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {customerSales.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                            No sales history found
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="card p-12 text-center space-y-4">
+              <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                <User size={40} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">No Customer Selected</h3>
+                <p className="text-slate-500">Select a customer from the list to view their sales history and branch activity.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -1270,7 +1787,7 @@ const Login = ({ onLogin, settings }: { onLogin: (user: any) => void, settings: 
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{ username: string, role: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ username: string, role: string, branch_id?: number } | null>(null);
   const [activeTab, setActiveTab] = useState('pos');
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1284,6 +1801,10 @@ export default function App() {
   const [selectedSaleItems, setSelectedSaleItems] = useState<any[]>([]);
   const [loadingSaleItems, setLoadingSaleItems] = useState(false);
   const [statusReason, setStatusReason] = useState('');
+  const [selectedBranch, setSelectedBranch] = useState<number | ''>('');
+  const [branches, setBranches] = useState<any[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [newOrdersCount, setNewOrdersCount] = useState(0);
 
   // Customer State
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -1292,6 +1813,9 @@ export default function App() {
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', address: '' });
   const [isSearchingCustomers, setIsSearchingCustomers] = useState(false);
+  const [isEditingCustomer, setIsEditingCustomer] = useState(false);
+  const [printCopies, setPrintCopies] = useState(1);
+  const [showPrintCopiesModal, setShowPrintCopiesModal] = useState(false);
 
   // Inventory State
   const [newItem, setNewItem] = useState({ name: '', price: '', category_id: '', sku: '', stock: '', image_url: '', low_stock_threshold: '5' });
@@ -1309,6 +1833,7 @@ export default function App() {
   const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
   const [reportType, setReportType] = useState<'day' | 'month' | 'year'>('day');
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reportBranchId, setReportBranchId] = useState<number | ''>('');
 
   const [isPrinting, setIsPrinting] = useState(false);
 
@@ -1321,7 +1846,10 @@ export default function App() {
     app_logo_url: '',
     vat_id: '',
     currency: '₱',
-    timezone: 'UTC'
+    timezone: 'UTC',
+    thermal_paper_size: '80mm',
+    thermal_font_style: 'normal',
+    thermal_print_density: 3,
   });
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -1386,7 +1914,8 @@ export default function App() {
             payment_method: sale.payment_method,
             discount: sale.discount,
             timestamp: sale.timestamp,
-            customer_id: sale.customer_id
+            customer_id: sale.customer_id,
+            branch_id: sale.branch_id
           })
         });
         
@@ -1424,6 +1953,13 @@ export default function App() {
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = !!selectedCustomer && newCustomer.name === selectedCustomer.name; // Simple check if we are editing
+      // Actually let's use a more explicit check or just handle both
+      
+      if (selectedCustomer && customers.some(c => c.id === selectedCustomer.id && c.name === newCustomer.name)) {
+         // This is a bit ambiguous, let's add an explicit ID check or separate function
+      }
+
       const res = await fetch('/api/customers', {
         method: 'POST',
         headers: {
@@ -1446,6 +1982,33 @@ export default function App() {
     }
   };
 
+  const handleUpdateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer) return;
+    
+    try {
+      const res = await fetch(`/api/customers/${selectedCustomer.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
+        body: JSON.stringify(newCustomer),
+      });
+      if (res.ok) {
+        setSelectedCustomer({ ...selectedCustomer, ...newCustomer });
+        setShowCustomerModal(false);
+        setIsEditingCustomer(false);
+        setNewCustomer({ name: '', phone: '', email: '', address: '' });
+        fetchCustomers();
+      } else {
+        alert('Failed to update customer');
+      }
+    } catch (err) {
+      alert('Error updating customer');
+    }
+  };
+
   useEffect(() => {
     if (customerSearchQuery.length >= 2) {
       const timer = setTimeout(() => {
@@ -1463,8 +2026,63 @@ export default function App() {
       fetchItems();
       fetchCategories();
       fetchPaymentMethods();
+      fetchBranches();
+      fetchPendingOrders();
     }
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'cashier')) {
+      interval = setInterval(() => {
+        fetchPendingOrders(true);
+      }, 10000); // Poll every 10 seconds
+    }
+    return () => clearInterval(interval);
+  }, [isAuthenticated, currentUser]);
+
+  const fetchPendingOrders = async (isPolling = false) => {
+    if (!currentUser) return;
+    try {
+      let url = '/api/orders/pending';
+      if (currentUser.role === 'cashier' && currentUser.branch_id) {
+        url += `?branch_id=${currentUser.branch_id}`;
+      }
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setPendingOrders(prev => {
+          if (isPolling && data.length > prev.length) {
+            const newCount = data.length - prev.length;
+            setNewOrdersCount(c => c + newCount);
+            // Show alert for new orders
+            if (Notification.permission === 'granted') {
+              new Notification('New Order Received', {
+                body: `You have ${newCount} new pending order(s).`
+              });
+            } else {
+              alert(`New Order Received! You have ${newCount} new pending order(s).`);
+            }
+          }
+          return data;
+        });
+      }
+    } catch (err) {
+      console.error("Failed to fetch pending orders");
+    }
+  };
+
+  const fetchBranches = async () => {
+    try {
+      const res = await fetch('/api/branches');
+      if (res.ok) {
+        const data = await res.json();
+        setBranches(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch branches");
+    }
+  };
 
   const fetchPaymentMethods = async () => {
     try {
@@ -1677,6 +2295,11 @@ export default function App() {
       return;
     }
 
+    if (currentUser?.role === 'callcenter' && !selectedBranch) {
+      alert('Please select a branch for this order.');
+      return;
+    }
+
     const discountValue = parseFloat(discount) || 0;
     const finalTotal = Math.max(0, cartTotal - discountValue);
 
@@ -1744,7 +2367,9 @@ export default function App() {
           total: finalTotal,
           payment_method: paymentMethod,
           discount: discountValue,
-          customer_id: selectedCustomer?.id || null
+          customer_id: selectedCustomer?.id || null,
+          branch_id: selectedBranch || currentUser?.branch_id || null,
+          status: currentUser?.role === 'callcenter' ? 'pending' : 'completed'
         })
       });
       
@@ -1766,11 +2391,17 @@ export default function App() {
           total: finalTotal, 
           payment_method: paymentMethod,
           items: [...cart],
-          discount: discountValue
+          discount: discountValue,
+          customer_name: selectedCustomer?.name,
+          customer_phone: selectedCustomer?.phone,
+          customer_address: selectedCustomer?.address,
+          branch_id: selectedBranch || currentUser?.branch_id || null
         });
         setShowReceipt(true);
         setCart([]);
         setDiscount('');
+        setSelectedCustomer(null);
+        setCustomerSearchQuery('');
         fetchItems(); // Refresh stock
       }
     } catch (err) {
@@ -1918,7 +2549,8 @@ export default function App() {
 
   const fetchReportSummary = async () => {
     try {
-      const res = await fetch(`/api/reports/summary?type=${reportType}&date=${reportDate}`);
+      const branchParam = currentUser?.role === 'cashier' ? currentUser.branch_id : reportBranchId;
+      const res = await fetch(`/api/reports/summary?type=${reportType}&date=${reportDate}&branch_id=${branchParam || ''}`);
       if (!res.ok) throw new Error('Failed to fetch summary');
       const data = await res.json();
       setDayEndReport(data);
@@ -1931,7 +2563,8 @@ export default function App() {
 
   const fetchSalesHistory = async () => {
     try {
-      const res = await fetch(`/api/reports/sales?type=${reportType}&date=${reportDate}`);
+      const branchParam = currentUser?.role === 'cashier' ? currentUser.branch_id : reportBranchId;
+      const res = await fetch(`/api/reports/sales?type=${reportType}&date=${reportDate}&branch_id=${branchParam || ''}`);
       if (!res.ok) throw new Error('Failed to fetch sales');
       const data = await res.json();
       setSalesHistory(data);
@@ -1947,7 +2580,7 @@ export default function App() {
       fetchReportSummary();
       fetchSalesHistory();
     }
-  }, [activeTab, reportType, reportDate]);
+  }, [activeTab, reportType, reportDate, reportBranchId]);
 
   const filteredItems = items.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.sku?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -1978,9 +2611,15 @@ export default function App() {
   }, [printTrigger]);
 
   const handlePrintReceipt = () => {
+    setPrintCopies(1);
+    setShowPrintCopiesModal(true);
+  };
+
+  const executePrintReceipt = () => {
     setPrintType('receipt');
     setIsPrinting(true);
     triggerPrint();
+    setShowPrintCopiesModal(false);
   };
 
   const handlePrintReport = async () => {
@@ -2028,6 +2667,73 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    const summary = dayEndReport?.summary || [];
+    const sales = salesHistory || [];
+    
+    doc.setFontSize(18);
+    doc.text(settings.company_name || 'Modern POS', 14, 22);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Sales Report - ${new Date().toLocaleDateString()}`, 14, 30);
+    
+    // Summary Table
+    autoTable(doc, {
+      startY: 40,
+      head: [['Payment Method', 'Transactions', 'Total Sales', 'Revenue']],
+      body: summary.map(s => [
+        s.payment_method,
+        s.transaction_count,
+        `${settings.currency || '₱'}${s.total_sales.toFixed(2)}`,
+        `${settings.currency || '₱'}${s.total_revenue.toFixed(2)}`
+      ]),
+    });
+    
+    // Sales History Table
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 10,
+      head: [['Time', 'Branch', 'Method', 'Total', 'Status']],
+      body: sales.map(s => [
+        new Date(s.timestamp).toLocaleTimeString(),
+        s.branch_name || 'Main',
+        s.payment_method,
+        `${settings.currency || '₱'}${s.total.toFixed(2)}`,
+        s.status
+      ]),
+    });
+    
+    doc.save(`report-${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  const handleExportCSV = () => {
+    const summary = dayEndReport?.summary || [];
+    const sales = salesHistory || [];
+    
+    // Export Sales History as CSV
+    const csvData = sales.map(s => ({
+      ID: s.id,
+      Time: new Date(s.timestamp).toLocaleString(),
+      Branch: s.branch_name || 'Main',
+      Customer: s.customer_name || 'Walk-in',
+      Method: s.payment_method,
+      Subtotal: s.subtotal.toFixed(2),
+      Tax: s.tax.toFixed(2),
+      Discount: s.discount.toFixed(2),
+      Total: s.total.toFixed(2),
+      Status: s.status,
+      CompletedBy: s.completed_by || ''
+    }));
+    
+    const csv = Papa.unparse(csvData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `sales-report-${new Date().toISOString().split('T')[0]}.csv`);
+    link.click();
+  };
+
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} settings={settings} />;
   }
@@ -2048,6 +2754,7 @@ export default function App() {
             syncPendingSales={syncPendingSales}
             isOpen={isSidebarOpen}
             setIsOpen={setIsSidebarOpen}
+            newOrdersCount={newOrdersCount}
           />
 
         <main className="flex-1 overflow-auto relative flex flex-col">
@@ -2090,6 +2797,118 @@ export default function App() {
                <AuditLogs />
              </div>
           )}
+          {activeTab === 'pending_orders' && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="p-4 lg:p-8 max-w-6xl mx-auto space-y-6 lg:space-y-8"
+            >
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <h2 className="text-2xl lg:text-3xl font-black tracking-tight flex items-center gap-3">
+                  <Bell size={28} className="text-indigo-600" />
+                  Pending Orders
+                </h2>
+                <button 
+                  onClick={() => fetchPendingOrders(false)}
+                  className="btn btn-secondary flex items-center gap-2 text-sm"
+                >
+                  <RefreshCw size={16} />
+                  Refresh
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {pendingOrders.length === 0 ? (
+                  <div className="col-span-full p-8 text-center text-slate-500 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                    No pending orders at the moment.
+                  </div>
+                ) : (
+                  pendingOrders.map(order => (
+                    <div key={order.id} className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 flex flex-col h-full">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Order #{order.id}</span>
+                          <span className="font-bold text-lg">{settings.currency || '₱'}{order.total.toFixed(2)}</span>
+                        </div>
+                        <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-xs font-bold rounded-lg uppercase tracking-wider">
+                          Pending
+                        </span>
+                      </div>
+                      
+                      <div className="text-sm text-slate-600 dark:text-slate-400 mb-4 flex-1">
+                        <p className="mb-2"><span className="font-semibold text-xs uppercase tracking-wider text-slate-500 block mb-0.5">Time:</span> {new Date(order.timestamp).toLocaleString()}</p>
+                        {order.customer_name && (
+                          <div className="mb-2 p-2 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                            <p className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 mb-1">
+                              <User size={14} className="text-indigo-600" />
+                              {order.customer_name}
+                            </p>
+                            {order.customer_address && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400 flex items-start gap-1.5">
+                                <MapPin size={12} className="mt-0.5 shrink-0" />
+                                {order.customer_address}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        <div className="mt-3 border-t border-slate-100 dark:border-slate-700 pt-3">
+                          <p className="font-semibold mb-1 text-xs uppercase tracking-wider text-slate-500">Items:</p>
+                          <ul className="space-y-1">
+                            {order.items?.map((item: any) => (
+                              <li key={item.id} className="flex justify-between text-xs">
+                                <span>{item.quantity}x {item.name}</span>
+                                <span>{settings.currency || '₱'}{(item.price_at_sale * item.quantity).toFixed(2)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`/api/orders/${order.id}/status`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ 
+                                status: 'completed', 
+                                completed_by: currentUser?.username,
+                                branch_id: currentUser?.branch_id
+                              })
+                            });
+                            if (res.ok) {
+                              fetchPendingOrders(false);
+                              setNewOrdersCount(Math.max(0, newOrdersCount - 1));
+                              // Set last sale to this order so we can print it
+                              setLastSale({
+                                id: order.id,
+                                subtotal: order.subtotal,
+                                tax: order.tax,
+                                total: order.total,
+                                payment_method: order.payment_method,
+                                items: order.items,
+                                discount: order.discount || 0
+                              });
+                              // Show print copies modal
+                              setPrintCopies(1);
+                              setShowPrintCopiesModal(true);
+                            }
+                          } catch (err) {
+                            console.error("Failed to complete order");
+                          }
+                        }}
+                        className="btn btn-primary w-full py-2 text-sm mt-auto"
+                      >
+                        <CheckCircle2 size={16} className="mr-2 inline" />
+                        Mark Completed
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          )}
           {activeTab === 'pos' && (
             <motion.div 
               key="pos"
@@ -2100,6 +2919,24 @@ export default function App() {
             >
               {/* Items Grid */}
               <div className="flex-1 p-4 lg:p-6 flex flex-col gap-4 lg:gap-6 overflow-hidden">
+                {currentUser?.role === 'callcenter' && (
+                  <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800 flex items-center gap-4">
+                    <MapPin className="text-indigo-600 dark:text-indigo-400" size={24} />
+                    <div className="flex-1">
+                      <label className="block text-xs font-bold text-indigo-800 dark:text-indigo-300 uppercase mb-1 tracking-wider">Select Branch for Order</label>
+                      <select 
+                        className="input w-full max-w-md text-sm border-indigo-200 dark:border-indigo-700 bg-white dark:bg-slate-800"
+                        value={selectedBranch}
+                        onChange={(e) => setSelectedBranch(e.target.value ? Number(e.target.value) : '')}
+                      >
+                        <option value="" disabled>-- Select a Branch --</option>
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                   <div className="relative flex-1 w-full">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={18} />
@@ -2191,12 +3028,30 @@ export default function App() {
                             <p className="text-xs text-indigo-600 dark:text-indigo-400">{selectedCustomer.phone || 'No phone'}</p>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => setSelectedCustomer(null)}
-                          className="p-1 hover:bg-indigo-100 dark:hover:bg-indigo-800 rounded-full text-indigo-600"
-                        >
-                          <X size={16} />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => {
+                              setNewCustomer({ 
+                                name: selectedCustomer.name, 
+                                phone: selectedCustomer.phone || '', 
+                                email: selectedCustomer.email || '', 
+                                address: selectedCustomer.address || '' 
+                              });
+                              setIsEditingCustomer(true);
+                              setShowCustomerModal(true);
+                            }}
+                            className="p-1 hover:bg-indigo-100 dark:hover:bg-indigo-800 rounded-full text-indigo-600"
+                            title="Edit Customer"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button 
+                            onClick={() => setSelectedCustomer(null)}
+                            className="p-1 hover:bg-indigo-100 dark:hover:bg-indigo-800 rounded-full text-indigo-600"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -2205,17 +3060,27 @@ export default function App() {
                           <input 
                             type="text"
                             placeholder="Search customer..."
-                            className="input w-full pl-10 text-sm"
+                            className="input w-full pl-10 pr-16 text-sm"
                             value={customerSearchQuery}
                             onChange={e => setCustomerSearchQuery(e.target.value)}
                           />
-                          <button 
-                            onClick={() => setShowCustomerModal(true)}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                            title="Add New Customer"
-                          >
-                            <UserPlus size={14} />
-                          </button>
+                          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                            {customerSearchQuery && (
+                              <button 
+                                onClick={() => setCustomerSearchQuery('')}
+                                className="p-1 text-slate-400 hover:text-slate-600"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => setShowCustomerModal(true)}
+                              className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                              title="Add New Customer"
+                            >
+                              <UserPlus size={14} />
+                            </button>
+                          </div>
                         </div>
                         
                         {customerSearchQuery.length >= 2 && customers.length > 0 && (
@@ -2241,7 +3106,10 @@ export default function App() {
                           <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-4 text-center">
                             <p className="text-sm text-slate-500">No customers found</p>
                             <button 
-                              onClick={() => setShowCustomerModal(true)}
+                              onClick={() => {
+                                setNewCustomer({ name: customerSearchQuery, phone: '', email: '', address: '' });
+                                setShowCustomerModal(true);
+                              }}
                               className="text-xs text-indigo-600 font-bold mt-2 hover:underline"
                             >
                               + Add "{customerSearchQuery}" as new customer
@@ -2596,6 +3464,18 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'customers' && (
+            <motion.div 
+              key="customers"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="flex-1 overflow-auto"
+            >
+              <CustomersSection currentUser={currentUser} settings={settings} />
+            </motion.div>
+          )}
+
           {activeTab === 'reports' && (
             <motion.div 
               key="reports"
@@ -2611,6 +3491,21 @@ export default function App() {
                 </div>
                 
                 <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto items-stretch sm:items-end">
+                  {(currentUser?.role === 'admin' || currentUser?.role === 'callcenter') && (
+                    <div className="flex flex-col gap-1 flex-1 sm:flex-none">
+                      <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Branch</label>
+                      <select 
+                        className="input py-2 px-3 text-sm"
+                        value={reportBranchId}
+                        onChange={(e) => setReportBranchId(e.target.value ? Number(e.target.value) : '')}
+                      >
+                        <option value="">All Branches</option>
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="flex flex-col gap-1 flex-1 sm:flex-none">
                     <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Type</label>
                     <select 
@@ -2645,10 +3540,17 @@ export default function App() {
                       <span className="text-sm">{isPrinting ? '...' : 'Print'}</span>
                     </button>
                     <button 
-                      onClick={() => exportToCSV(dayEndReport?.items || [], 'top_selling_items.csv', ['name', 'total_quantity', 'total_revenue'])}
+                      onClick={handleExportPDF}
                       className="btn btn-secondary flex-1 sm:flex-none flex items-center justify-center gap-2 py-2"
                     >
-                      <Download size={16} />
+                      <FileText size={16} />
+                      <span className="text-sm">PDF</span>
+                    </button>
+                    <button 
+                      onClick={handleExportCSV}
+                      className="btn btn-secondary flex-1 sm:flex-none flex items-center justify-center gap-2 py-2"
+                    >
+                      <FileSpreadsheet size={16} />
                       <span className="text-sm">CSV</span>
                     </button>
                   </div>
@@ -2722,7 +3624,9 @@ export default function App() {
                       <thead className="bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">
                         <tr>
                           <th className="px-4 lg:px-6 py-3">Time</th>
+                          <th className="px-4 lg:px-6 py-3">Branch</th>
                           <th className="px-4 lg:px-6 py-3">Method</th>
+                          <th className="px-4 lg:px-6 py-3">Completed By</th>
                           <th className="px-4 lg:px-6 py-3 text-right">Total</th>
                           <th className="px-4 lg:px-6 py-3 text-right">Action</th>
                         </tr>
@@ -2733,10 +3637,28 @@ export default function App() {
                             <td className="px-4 lg:px-6 py-4 text-slate-600 dark:text-slate-300 whitespace-nowrap">
                               {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </td>
+                            <td className="px-4 lg:px-6 py-4 text-slate-600 dark:text-slate-300">
+                              <div className="flex flex-col">
+                                <span className="font-medium">{sale.branch_name || 'Main'}</span>
+                                {sale.completed_at_branch_name && sale.completed_at_branch_name !== sale.branch_name && (
+                                  <span className="text-[10px] text-slate-400 italic">via {sale.completed_at_branch_name}</span>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-4 lg:px-6 py-4">
                               <span className="uppercase text-[10px] font-bold px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                                 {sale.payment_method}
                               </span>
+                            </td>
+                            <td className="px-4 lg:px-6 py-4 text-slate-600 dark:text-slate-300">
+                              {sale.completed_by ? (
+                                <span className="flex items-center gap-1 text-xs">
+                                  <CheckCircle2 size={12} className="text-emerald-500" />
+                                  {sale.completed_by}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-slate-400">-</span>
+                              )}
                             </td>
                             <td className="px-4 lg:px-6 py-4 text-right">
                               <div className="flex flex-col items-end">
@@ -2794,7 +3716,7 @@ export default function App() {
               </div>
               <div className="p-8 bg-slate-50 dark:bg-slate-900 flex justify-center">
                 <div id="thermal-receipt" className="bg-white dark:bg-slate-800 shadow-lg">
-                   <Receipt sale={lastSale} items={lastSale.items} settings={settings} />
+                   <Receipt sale={lastSale} items={lastSale.items} settings={settings} branches={branches} />
                 </div>
               </div>
               <div className="p-6 grid grid-cols-2 gap-4">
@@ -3083,12 +4005,37 @@ export default function App() {
                       </span>
                     </div>
                     {selectedSale.customer_name && (
-                      <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                        <User size={12} />
-                        <span className="font-medium">{selectedSale.customer_name}</span>
-                        {selectedSale.customer_phone && <span>• {selectedSale.customer_phone}</span>}
+                      <div className="flex flex-col gap-1 mt-1">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          <User size={12} />
+                          <span className="font-medium">{selectedSale.customer_name}</span>
+                          {selectedSale.customer_phone && <span>• {selectedSale.customer_phone}</span>}
+                        </div>
+                        {selectedSale.customer_address && (
+                          <div className="flex items-start gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 pl-3.5">
+                            <MapPin size={10} className="mt-0.5 shrink-0" />
+                            <span>{selectedSale.customer_address}</span>
+                          </div>
+                        )}
                       </div>
                     )}
+                    <div className="flex flex-col gap-1 mt-2">
+                      {selectedSale.branch_name && (
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                          <Store size={10} />
+                          <span>Origin: {selectedSale.branch_name}</span>
+                        </div>
+                      )}
+                      {selectedSale.completed_by && (
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                          <CheckCircle2 size={10} className="text-emerald-500" />
+                          <span className="font-medium">
+                            Completed by: {selectedSale.completed_by} 
+                            {selectedSale.completed_at_branch_name && ` (${selectedSale.completed_at_branch_name})`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Total Amount</p>
@@ -3178,15 +4125,24 @@ export default function App() {
             >
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-bold flex items-center gap-2">
-                  <UserPlus className="text-indigo-600" size={24} />
-                  Add New Customer
+                  {isEditingCustomer ? (
+                    <>
+                      <Edit className="text-indigo-600" size={24} />
+                      Edit Customer
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="text-indigo-600" size={24} />
+                      Add New Customer
+                    </>
+                  )}
                 </h3>
-                <button onClick={() => setShowCustomerModal(false)} className="text-slate-400 hover:text-slate-600">
+                <button onClick={() => { setShowCustomerModal(false); setIsEditingCustomer(false); }} className="text-slate-400 hover:text-slate-600">
                   <X size={24} />
                 </button>
               </div>
 
-              <form onSubmit={handleCreateCustomer} className="space-y-4">
+              <form onSubmit={isEditingCustomer ? handleUpdateCustomer : handleCreateCustomer} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Full Name *</label>
                   <div className="relative">
@@ -3247,13 +4203,13 @@ export default function App() {
                 <div className="flex gap-3 pt-2">
                   <button 
                     type="button" 
-                    onClick={() => setShowCustomerModal(false)}
+                    onClick={() => { setShowCustomerModal(false); setIsEditingCustomer(false); }}
                     className="btn flex-1 bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 border-none"
                   >
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary flex-1">
-                    Save Customer
+                    {isEditingCustomer ? 'Update Customer' : 'Save Customer'}
                   </button>
                 </div>
               </form>
@@ -3262,11 +4218,73 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Print Copies Modal */}
+      <AnimatePresence>
+        {showPrintCopiesModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                <h3 className="text-xl font-bold flex items-center gap-2">
+                  <Printer size={24} className="text-indigo-600" />
+                  Print Receipt
+                </h3>
+                <button onClick={() => setShowPrintCopiesModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="p-6 space-y-6">
+                <div className="text-center">
+                  <p className="text-slate-500 dark:text-slate-400 mb-4">How many copies would you like to print?</p>
+                  <div className="flex items-center justify-center gap-6">
+                    <button 
+                      onClick={() => setPrintCopies(Math.max(1, printCopies - 1))}
+                      className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      -
+                    </button>
+                    <span className="text-4xl font-bold w-12 text-center">{printCopies}</span>
+                    <button 
+                      onClick={() => setPrintCopies(printCopies + 1)}
+                      className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    onClick={() => setShowPrintCopiesModal(false)}
+                    className="btn flex-1 bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 border-none"
+                  >
+                    Skip
+                  </button>
+                  <button 
+                    onClick={executePrintReceipt}
+                    className="btn btn-primary flex-1"
+                  >
+                    Print {printCopies} {printCopies === 1 ? 'Copy' : 'Copies'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Hidden Print Content Area - Always rendered to ensure availability for print */}
       <div className="print-only">
-        {printType === 'receipt' && lastSale && (
-          <Receipt sale={lastSale} items={lastSale.items} settings={settings} />
-        )}
+        {printType === 'receipt' && lastSale && Array.from({ length: printCopies }).map((_, i) => (
+          <div key={i} className={i < printCopies - 1 ? 'page-break' : ''}>
+            <Receipt sale={lastSale} items={lastSale.items} settings={settings} branches={branches} />
+          </div>
+        ))}
         
         {printType === 'report' && (
           dayEndReport ? (
