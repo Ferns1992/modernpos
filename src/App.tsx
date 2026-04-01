@@ -32,6 +32,9 @@ import {
   Mail,
   MapPin,
   Bell,
+  BellRing,
+  Volume2,
+  VolumeX,
   CheckCircle2,
   Store,
   X,
@@ -269,7 +272,7 @@ const ThemeToggle = () => {
   );
 };
 
-const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isOnline, pendingSalesCount, isSyncing, syncPendingSales, isOpen, setIsOpen, newOrdersCount }: { 
+const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isOnline, pendingSalesCount, isSyncing, syncPendingSales, isOpen, setIsOpen, newOrdersCount, setNewOrdersCount }: { 
   activeTab: string, 
   setActiveTab: (tab: string) => void, 
   onLogout: () => void, 
@@ -281,7 +284,8 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
   syncPendingSales: () => void,
   isOpen: boolean,
   setIsOpen: (open: boolean) => void,
-  newOrdersCount?: number
+  newOrdersCount?: number,
+  setNewOrdersCount: (count: number) => void
 }) => {
   const menuItems = [
     { id: 'pos', icon: ShoppingCart, label: 'Checkout' },
@@ -293,6 +297,10 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
 
   if (currentUser?.role === 'admin' || currentUser?.role === 'cashier') {
     menuItems.splice(1, 0, { id: 'pending_orders', icon: Bell, label: 'Pending Orders' });
+  }
+
+  if (currentUser?.role === 'kds') {
+    menuItems.splice(0, menuItems.length, { id: 'kds', icon: Package, label: 'Kitchen Display' });
   }
 
   if (currentUser?.role === 'admin') {
@@ -344,6 +352,9 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
               key={item.id}
               onClick={() => {
                 setActiveTab(item.id);
+                if (item.id === 'pending_orders' || item.id === 'kds') {
+                  setNewOrdersCount(0);
+                }
                 if (window.innerWidth < 1024) setIsOpen(false);
               }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
@@ -354,7 +365,7 @@ const Sidebar = ({ activeTab, setActiveTab, onLogout, currentUser, settings, isO
             >
               <item.icon size={20} />
               <span className="flex-1 text-left">{item.label}</span>
-              {item.id === 'pending_orders' && newOrdersCount !== undefined && newOrdersCount > 0 && (
+              {(item.id === 'pending_orders' || item.id === 'kds') && newOrdersCount !== undefined && newOrdersCount > 0 && (
                 <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
                   {newOrdersCount}
                 </span>
@@ -1079,6 +1090,142 @@ const SettingsPanel = ({ settings, onUpdate, currentUser }: { settings: Settings
   );
 };
 
+// --- KDS Panel Component ---
+const KDSPanel = ({ orders, onUpdateStatus, currentUser, isSoundEnabled, setIsSoundEnabled, onTestSound }: { 
+  orders: Sale[], 
+  onUpdateStatus: (id: number, status: string) => void, 
+  currentUser: any,
+  isSoundEnabled: boolean,
+  setIsSoundEnabled: (enabled: boolean) => void,
+  onTestSound: () => void
+}) => {
+  const branchOrders = orders.filter(o => !currentUser.branch_id || o.branch_id === currentUser.branch_id);
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="p-4 lg:p-8 max-w-7xl mx-auto space-y-6"
+    >
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl lg:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Kitchen Display System</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Manage order preparation for your branch</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsSoundEnabled(!isSoundEnabled)}
+            className={`p-3 rounded-xl border transition-all flex items-center gap-2 ${
+              isSoundEnabled 
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/20 dark:border-emerald-800' 
+                : 'bg-slate-50 border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'
+            }`}
+            title={isSoundEnabled ? "Mute Alert" : "Unmute Alert"}
+          >
+            {isSoundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            <span className="text-xs font-bold uppercase tracking-wider">{isSoundEnabled ? 'Sound On' : 'Muted'}</span>
+          </button>
+          <button 
+            onClick={onTestSound}
+            className="p-3 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all"
+            title="Test Sound"
+          >
+            <BellRing size={20} />
+          </button>
+          <div className="bg-indigo-50 dark:bg-indigo-900/20 px-4 py-2 rounded-xl border border-indigo-100 dark:border-indigo-800">
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Active Orders: {branchOrders.length}</span>
+          </div>
+        </div>
+      </div>
+
+      {!isSoundEnabled && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 rounded-xl flex items-center gap-3 text-amber-700 dark:text-amber-400">
+          <AlertCircle size={18} />
+          <p className="text-sm font-medium">Sound alerts are currently muted. You may miss new orders!</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {branchOrders.map((order) => (
+          <div key={order.id} className="card overflow-hidden border-t-4 border-indigo-500">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Order ID</span>
+                <div className="font-black text-lg text-slate-900 dark:text-white">#{order.id}</div>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Time</span>
+                <div className="text-xs font-bold text-slate-600 dark:text-slate-300">{new Date(order.timestamp).toLocaleTimeString()}</div>
+              </div>
+            </div>
+            
+            <div className="p-4 space-y-3 min-h-[150px]">
+              {(order as any).items?.map((item: any, idx: number) => (
+                <div key={idx} className="flex justify-between items-start gap-3">
+                  <div className="flex gap-2">
+                    <span className="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 text-xs font-bold px-2 py-0.5 rounded-md h-fit">
+                      {item.quantity}x
+                    </span>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{item.name}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</span>
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                  order.preparation_status === 'ready' ? 'bg-emerald-100 text-emerald-600' :
+                  order.preparation_status === 'preparing' ? 'bg-amber-100 text-amber-600' :
+                  'bg-slate-100 text-slate-600'
+                }`}>
+                  {order.preparation_status || 'pending'}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2">
+                {(!order.preparation_status || order.preparation_status === 'pending') && (
+                  <button 
+                    onClick={() => onUpdateStatus(order.id, 'preparing')}
+                    className="col-span-2 btn bg-amber-500 hover:bg-amber-600 text-white text-xs py-2"
+                  >
+                    Start Preparing
+                  </button>
+                )}
+                {order.preparation_status === 'preparing' && (
+                  <button 
+                    onClick={() => onUpdateStatus(order.id, 'ready')}
+                    className="col-span-2 btn bg-emerald-500 hover:bg-emerald-600 text-white text-xs py-2"
+                  >
+                    Mark as Ready
+                  </button>
+                )}
+                {order.preparation_status === 'ready' && (
+                  <button 
+                    onClick={() => onUpdateStatus(order.id, 'delivered')}
+                    className="col-span-2 btn bg-indigo-500 hover:bg-indigo-600 text-white text-xs py-2"
+                  >
+                    Mark as Delivered
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+        {branchOrders.length === 0 && (
+          <div className="col-span-full py-20 text-center space-y-4">
+            <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
+              <Package size={40} />
+            </div>
+            <p className="text-slate-500 dark:text-slate-400 font-medium">No active orders for this branch.</p>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
+
 // --- Admin Component ---
 const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMethods?: () => void, currentUser: any }) => {
   const [username, setUsername] = useState('');
@@ -1360,6 +1507,7 @@ const AdminPanel = ({ onUpdatePaymentMethods, currentUser }: { onUpdatePaymentMe
               >
                 <option value="cashier">Cashier</option>
                 <option value="callcenter">Call Center</option>
+                <option value="kds">KDS (Kitchen)</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
@@ -2019,6 +2167,29 @@ export default function App() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showMobileCart, setShowMobileCart] = useState(false);
+  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+
+  const alertSound = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    alertSound.current = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-urgent-simple-alarm-loop-2992.mp3');
+    alertSound.current.volume = 1.0;
+  }, []);
+
+  const playAlertSound = () => {
+    if (isSoundEnabled && alertSound.current) {
+      alertSound.current.currentTime = 0;
+      alertSound.current.play().catch(e => console.error("Audio play failed:", e));
+      
+      // Play again after 1.5 seconds for extra loudness/urgency
+      setTimeout(() => {
+        if (alertSound.current) {
+          alertSound.current.currentTime = 0;
+          alertSound.current.play().catch(e => console.error("Audio play failed:", e));
+        }
+      }, 1500);
+    }
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -2036,6 +2207,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('pendingSales', JSON.stringify(pendingSales));
   }, [pendingSales]);
+
+  useEffect(() => {
+    if (activeTab === 'kds' || activeTab === 'pending_orders') {
+      setNewOrdersCount(0);
+    }
+  }, [activeTab, pendingOrders.length]);
 
   useEffect(() => {
     if (isOnline && pendingSales.length > 0 && !isSyncing) {
@@ -2199,7 +2376,7 @@ export default function App() {
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'cashier')) {
+    if (isAuthenticated && (currentUser?.role === 'admin' || currentUser?.role === 'cashier' || currentUser?.role === 'kds')) {
       interval = setInterval(() => {
         fetchPendingOrders(true);
       }, 10000); // Poll every 10 seconds
@@ -2211,7 +2388,7 @@ export default function App() {
     if (!currentUser) return;
     try {
       let url = '/api/orders/pending';
-      if (currentUser.role === 'cashier' && currentUser.branch_id) {
+      if ((currentUser.role === 'cashier' || currentUser.role === 'kds') && currentUser.branch_id) {
         url += `?branch_id=${currentUser.branch_id}`;
       }
       const res = await fetch(url);
@@ -2221,13 +2398,17 @@ export default function App() {
           if (isPolling && data.length > prev.length) {
             const newCount = data.length - prev.length;
             setNewOrdersCount(c => c + newCount);
+            
+            // Play sound for KDS and Cashier
+            if (currentUser.role === 'kds' || currentUser.role === 'cashier') {
+              playAlertSound();
+            }
+
             // Show alert for new orders
             if (Notification.permission === 'granted') {
               new Notification('New Order Received', {
                 body: `You have ${newCount} new pending order(s).`
               });
-            } else {
-              alert(`New Order Received! You have ${newCount} new pending order(s).`);
             }
           }
           return data;
@@ -2277,6 +2458,19 @@ export default function App() {
   const handleLogin = (user: any) => {
     setIsAuthenticated(true);
     setCurrentUser(user);
+    
+    // Request notification permission
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    if (user.role === 'kds') {
+      setActiveTab('kds');
+    } else if (user.role === 'callcenter') {
+      setActiveTab('pending_orders');
+    } else {
+      setActiveTab('pos');
+    }
   };
 
   const handleLogout = () => {
@@ -2675,6 +2869,26 @@ export default function App() {
     }
   };
 
+  const handleUpdatePreparationStatus = async (id: number, preparation_status: string) => {
+    try {
+      const res = await fetch(`/api/orders/${id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Username': currentUser?.username || 'System'
+        },
+        body: JSON.stringify({ preparation_status }),
+      });
+      if (res.ok) {
+        fetchPendingOrders();
+      } else {
+        alert('Failed to update preparation status');
+      }
+    } catch (err) {
+      alert('Error updating preparation status');
+    }
+  };
+
   const handleUpdateItem = async () => {
     if (!editingItem) return;
     const price = parseFloat(editingItem.price.toString());
@@ -2925,6 +3139,7 @@ export default function App() {
             isOpen={isSidebarOpen}
             setIsOpen={setIsSidebarOpen}
             newOrdersCount={newOrdersCount}
+            setNewOrdersCount={setNewOrdersCount}
           />
 
         <main className="flex-1 overflow-auto relative flex flex-col">
@@ -3005,6 +3220,19 @@ export default function App() {
                           Pending
                         </span>
                       </div>
+
+                      {order.preparation_status && (
+                        <div className="mb-4">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Preparation Status</span>
+                          <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+                            order.preparation_status === 'ready' ? 'bg-emerald-100 text-emerald-600' :
+                            order.preparation_status === 'preparing' ? 'bg-amber-100 text-amber-600' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            {order.preparation_status}
+                          </span>
+                        </div>
+                      )}
                       
                       <div className="text-sm text-slate-600 dark:text-slate-400 mb-4 flex-1">
                         <p className="mb-2"><span className="font-semibold text-xs uppercase tracking-wider text-slate-500 block mb-0.5">Time:</span> {new Date(order.timestamp).toLocaleString()}</p>
@@ -3068,10 +3296,14 @@ export default function App() {
                             console.error("Failed to complete order");
                           }
                         }}
-                        className="btn btn-primary w-full py-2 text-sm mt-auto"
+                        className={`w-full py-2 rounded-xl font-bold text-sm transition-all shadow-lg mt-auto flex items-center justify-center ${
+                          order.preparation_status === 'ready' 
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200' 
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-200'
+                        }`}
                       >
-                        <CheckCircle2 size={16} className="mr-2 inline" />
-                        Mark Completed
+                        <CheckCircle2 size={16} className="mr-2" />
+                        {order.preparation_status === 'ready' ? 'Complete & Print (Ready)' : 'Mark Completed'}
                       </button>
                     </div>
                   ))
@@ -3648,6 +3880,17 @@ export default function App() {
 
           {activeTab === 'inventory_report' && (
             <InventoryReport data={inventoryReportData} settings={settings} categories={categories} />
+          )}
+
+          {activeTab === 'kds' && (
+            <KDSPanel 
+              orders={pendingOrders} 
+              onUpdateStatus={handleUpdatePreparationStatus} 
+              currentUser={currentUser} 
+              isSoundEnabled={isSoundEnabled}
+              setIsSoundEnabled={setIsSoundEnabled}
+              onTestSound={playAlertSound}
+            />
           )}
 
           {activeTab === 'customers' && (

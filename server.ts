@@ -150,6 +150,10 @@ try {
 } catch (e) {}
 
 try {
+  db.prepare("ALTER TABLE sales ADD COLUMN preparation_status TEXT DEFAULT 'pending'").run();
+} catch (e) {}
+
+try {
   db.prepare("ALTER TABLE sales ADD COLUMN completed_by TEXT").run();
 } catch (e) {}
 try {
@@ -740,15 +744,21 @@ async function startServer() {
 
   app.put("/api/orders/:id/status", (req, res) => {
     const { id } = req.params;
-    const { status, completed_by, branch_id } = req.body;
+    const { status, preparation_status, completed_by, branch_id } = req.body;
     
-    if (!status) return res.status(400).json({ error: "Status is required" });
+    if (!status && !preparation_status) return res.status(400).json({ error: "Status or preparation_status is required" });
     
     try {
-      if (completed_by) {
-        db.prepare("UPDATE sales SET status = ?, completed_by = ?, completed_at_branch_id = ? WHERE id = ?").run(status, completed_by, branch_id || null, id);
-      } else {
-        db.prepare("UPDATE sales SET status = ? WHERE id = ?").run(status, id);
+      if (status) {
+        if (completed_by) {
+          db.prepare("UPDATE sales SET status = ?, completed_by = ?, completed_at_branch_id = ? WHERE id = ?").run(status, completed_by, branch_id || null, id);
+        } else {
+          db.prepare("UPDATE sales SET status = ? WHERE id = ?").run(status, id);
+        }
+      }
+      
+      if (preparation_status) {
+        db.prepare("UPDATE sales SET preparation_status = ? WHERE id = ?").run(preparation_status, id);
       }
       
       let branchName = "Unknown Branch";
@@ -757,7 +767,11 @@ async function startServer() {
         if (branch) branchName = branch.name;
       }
 
-      logEdit('sales', Number(id), 'UPDATE_STATUS', `Sale ${id} status updated to ${status} by ${completed_by || getUsername(req)} at ${branchName}`, getUsername(req));
+      const logMsg = status 
+        ? `Sale ${id} status updated to ${status} by ${completed_by || getUsername(req)} at ${branchName}`
+        : `Sale ${id} preparation status updated to ${preparation_status} by ${getUsername(req)}`;
+
+      logEdit('sales', Number(id), 'UPDATE_STATUS', logMsg, getUsername(req));
       res.json({ success: true });
     } catch (err) {
       console.error("Error updating order status:", err);

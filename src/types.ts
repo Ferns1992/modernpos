@@ -35,7 +35,8 @@ export interface Sale {
   discount: number;
   timestamp: string;
   payment_method: string;
-  status: 'completed' | 'refunded' | 'voided';
+  status: 'completed' | 'refunded' | 'voided' | 'pending';
+  preparation_status?: 'pending' | 'preparing' | 'ready' | 'delivered';
   status_reason?: string;
   customer_id?: number | null;
   customer_name?: string;
