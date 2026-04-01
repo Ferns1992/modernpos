@@ -60,12 +60,20 @@ Define these in a `.env` file or your Docker environment:
 - `DATABASE_PATH`: Path to the SQLite database file (default: `pos.db`).
 - `NODE_ENV`: Set to `production` for optimized builds.
 
-## 🛡️ Security
+## 🛡️ Security & Access
 
 The application uses role-based access control. Default roles include:
 - **Admin:** Full access to settings, logs, and reports.
 - **Cashier:** Access to POS and pending orders.
 - **KDS:** Access to the Kitchen Display System.
+
+### Default Credentials
+| Role | Username | Password |
+|------|----------|----------|
+| Admin | `admin` | `admin` |
+
+> [!IMPORTANT]
+> It is highly recommended to change the default password immediately after the first login via the Admin settings.
 
 ---
 Built with ❤️ for modern businesses.
