@@ -1,12 +1,11 @@
 services:
   pos-app:
     image: pos-app:latest
-    build: .
     ports:
       - target: 4000
         published: 4000
         protocol: tcp
-        mode: ingress
+        mode: host
     volumes:
       - /data/pos.db:/data/pos.db
     environment:

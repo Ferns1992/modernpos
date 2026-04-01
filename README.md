@@ -30,12 +30,20 @@ A full-stack, responsive Point of Sale (POS) and Inventory Management system bui
    ```
 3. Access the app at `http://localhost:4000`.
 
-### Using Portainer (Stack)
+### Using Portainer (Stack / Swarm Mode)
 
-1. Create a new Stack in Portainer.
-2. Select "Repository" as the build method.
-3. Use the repository URL and set the target to `docker-compose.yml`.
-4. Deploy the stack.
+1. **Fix Ingress Network (Required if you get "ingress network not present" error):**
+   Run this command on your server's terminal:
+   ```bash
+   docker network create --driver overlay --ingress ingress
+   ```
+2. Create a new Stack in Portainer.
+3. Select "Repository" as the build method.
+4. Use the repository URL and set the target to `docker-compose.yml`.
+5. Deploy the stack.
+
+> [!NOTE]
+> If you still get ingress errors, the `docker-compose.yml` is now configured to use `mode: host` for ports, which bypasses the ingress network.
 
 ## 💻 Local Development
 
