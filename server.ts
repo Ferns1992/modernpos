@@ -68,7 +68,64 @@ db.exec(`
     tax REAL NOT NULL DEFAULT 0,
     total REAL NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    payment_method TEXT DEFAULT 'cash'
+    payment_method TEXT DEFAULT 'cash',
+    status TEXT DEFAULT 'completed',
+    status_reason TEXT,
+    customer_id INTEGER,
+    branch_id INTEGER,
+    preparation_status TEXT DEFAULT 'pending',
+    completed_by TEXT,
+    completed_at_branch_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS sale_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sale_id INTEGER,
+    item_id INTEGER,
+    quantity INTEGER NOT NULL,
+    price_at_sale REAL NOT NULL,
+    cost_price_at_sale REAL DEFAULT 0,
+    FOREIGN KEY (item_id) REFERENCES items(id),
+    FOREIGN KEY (sale_id) REFERENCES sales(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS payment_methods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    is_active BOOLEAN DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS stock_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER,
+    adjustment INTEGER NOT NULL,
+    reason TEXT,
+    username TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (item_id) REFERENCES items(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS edit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name TEXT NOT NULL,
+    row_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
@@ -164,59 +221,9 @@ try {
   db.prepare("ALTER TABLE branches ADD COLUMN vat_id TEXT").run();
 } catch (e) {}
 
+// Cleanup any invalid data
 db.exec(`
-  CREATE TABLE IF NOT EXISTS sale_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sale_id INTEGER,
-    item_id INTEGER,
-    quantity INTEGER NOT NULL,
-    price_at_sale REAL NOT NULL,
-    cost_price_at_sale REAL DEFAULT 0,
-    FOREIGN KEY (item_id) REFERENCES items(id),
-    FOREIGN KEY (sale_id) REFERENCES sales(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS payment_methods (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    is_active BOOLEAN DEFAULT 1
-  );
-
-  CREATE TABLE IF NOT EXISTS stock_adjustments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_id INTEGER,
-    adjustment INTEGER NOT NULL,
-    reason TEXT,
-    username TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (item_id) REFERENCES items(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS customers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    phone TEXT,
-    email TEXT,
-    address TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS edit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_name TEXT NOT NULL,
-    row_id INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    details TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  -- Cleanup any invalid data
-  UPDATE items SET price = 0 WHERE price IS NULL OR price != price; -- price != price is a trick to detect NaN in some SQL engines, but better-sqlite3 handles it
+  UPDATE items SET price = 0 WHERE price IS NULL OR price != price;
 `);
 
 // Seed default settings if not exist

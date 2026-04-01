@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "modern-pos-inventory",
+  "description": "A professional POS and Inventory Management System built with React, Express, and SQLite.",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
