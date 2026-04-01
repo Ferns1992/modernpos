@@ -1,5 +1,6 @@
 services:
   pos-app:
+    image: pos-app:latest
     build: .
     ports:
       - "4000:4000"
