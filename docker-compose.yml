@@ -3,9 +3,16 @@ services:
     image: pos-app:latest
     build: .
     ports:
-      - "4000:4000"
+      - target: 4000
+        published: 4000
+        protocol: tcp
+        mode: ingress
     volumes:
-      - ./pos.db:/data/pos.db
+      - /data/pos.db:/data/pos.db
     environment:
       - NODE_ENV=production
-    restart: always
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == manager]
