@@ -2,9 +2,9 @@ version: "3.8"
 
 services:
   modern-pos:
-    image: nginx:alpine
+    build: .
     ports:
-      - "4000:80"
-    volumes:
-      - ./dist:/usr/share/nginx/html:ro
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
     restart: unless-stopped
