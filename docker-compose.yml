@@ -1,5 +1,6 @@
 services:
   pos-app:
+    image: pos-app:latest
     build: .
     ports:
       - target: 4000
@@ -10,3 +11,4 @@ services:
       - ./pos.db:/data/pos.db
     environment:
       - NODE_ENV=production
+    restart: always
