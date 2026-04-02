@@ -8,4 +8,5 @@ services:
       - ./pos.db:/data/pos.db
     environment:
       - NODE_ENV=production
+      - DATABASE_PATH=/data/pos.db
     restart: always
