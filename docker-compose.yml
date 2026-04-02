@@ -1,7 +1,8 @@
+version: "3.8"
+
 services:
   modern-pos:
     image: nginx:alpine
-    container_name: modern-pos
     ports:
       - "4000:80"
     volumes:
