@@ -3,10 +3,7 @@ services:
     image: pos-app:latest
     build: .
     ports:
-      - target: 4000
-        published: 4000
-        protocol: tcp
-        mode: host
+      - "4000:4000"
     volumes:
       - ./pos.db:/data/pos.db
     environment:
