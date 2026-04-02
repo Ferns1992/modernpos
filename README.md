@@ -32,10 +32,14 @@ A full-stack, responsive Point of Sale (POS) and Inventory Management system bui
 
 ### Using Portainer (Legacy Mode)
 
-1. Create a new Stack in Portainer.
-2. Select "Repository" as the build method.
-3. Use the repository URL and set the target to `docker-compose.yml`.
-4. Deploy the stack.
+1. Create a new **Stack** in Portainer.
+2. Select **"Repository"** as the build method.
+3. Use your GitHub repository URL.
+4. Set the **"Compose path"** to `docker-compose.yml`.
+5. Click **"Deploy the stack"**.
+
+> [!TIP]
+> This app uses a persistent volume at `./data` on your host to store the `pos.db` database and uploaded images. Make sure the user running Docker has permissions to write to this directory.
 
 > [!NOTE]
 > If you still get ingress errors, the `docker-compose.yml` is now configured to use `mode: host` for ports, which bypasses the ingress network.

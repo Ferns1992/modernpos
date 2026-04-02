@@ -279,7 +279,7 @@ async function startServer() {
   }
 
   // Multer setup for image uploads
-  const uploadDir = process.env.VERCEL ? '/tmp/uploads' : path.join(process.cwd(), 'uploads');
+  const uploadDir = process.env.VERCEL ? '/tmp/uploads' : (process.env.DATABASE_PATH ? path.join(path.dirname(process.env.DATABASE_PATH), 'uploads') : path.join(process.cwd(), 'uploads'));
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }

@@ -5,7 +5,7 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      - ./pos.db:/data/pos.db
+      - ./data:/data
     environment:
       - NODE_ENV=production
       - DATABASE_PATH=/data/pos.db
