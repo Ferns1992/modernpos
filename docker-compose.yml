@@ -1,13 +1,9 @@
-version: '3.8'
 services:
   modern-pos:
     build: .
-    image: ferns1992/modernpos:latest
-    container_name: modern-pos
+    image: modern-pos
     ports:
       - "4000:4000"
-    volumes:
-      - data:/data
     environment:
       - NODE_ENV=production
       - DATABASE_PATH=/data/pos.db
