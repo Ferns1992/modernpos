@@ -1,15 +1,17 @@
-version: '3'
+version: "3.3"
 services:
   modern-pos:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - 4000:4000
+      - "4000:4000"
     environment:
-      NODE_ENV: production
-      DATABASE_PATH: /data/pos.db
+      - NODE_ENV=production
+      - DATABASE_PATH=/data/pos.db
     restart: unless-stopped
     volumes:
-      - data:/data
+      - pos-data:/data
 
 volumes:
-  data:
+  pos-data:
