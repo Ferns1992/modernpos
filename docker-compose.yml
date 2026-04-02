@@ -1,11 +1,12 @@
 services:
   pos-app:
-    image: pos-app:latest
     build: .
     ports:
-      - "4000:4000"
+      - target: 4000
+        published: 4000
+        protocol: tcp
+        mode: host
     volumes:
       - ./pos.db:/data/pos.db
     environment:
       - NODE_ENV=production
-    restart: always
