@@ -1,17 +1,7 @@
-version: "3.3"
 services:
   modern-pos:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: nginx:alpine
+    container_name: modern-pos
     ports:
-      - "4000:4000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_PATH=/data/pos.db
+      - "4000:80"
     restart: unless-stopped
-    volumes:
-      - pos-data:/data
-
-volumes:
-  pos-data:
