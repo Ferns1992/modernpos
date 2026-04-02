@@ -1,15 +1,9 @@
 services:
   modern-pos:
-    build: .
-    image: modern-pos:latest
+    image: nginx:alpine
+    container_name: modern-pos
     ports:
-      - "4000:4000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_PATH=/data/pos.db
-    restart: unless-stopped
+      - "4000:80"
     volumes:
-      - pos-data:/data
-
-volumes:
-  pos-data:
+      - ./dist:/usr/share/nginx/html:ro
+    restart: unless-stopped
