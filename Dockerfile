@@ -1,9 +1,9 @@
-FROM node:22-alpine
+FROM node:22-bookworm
 
 WORKDIR /app
 
-# Install build dependencies for native modules (better-sqlite3) and git
-RUN apk add --no-cache python3 make g++ git
+# Install build dependencies for native modules (better-sqlite3)
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./
