@@ -1,7 +1,10 @@
 version: '3'
 services:
   modern-pos:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: modern-pos:latest
     ports:
       - "4000:4000"
     volumes:
