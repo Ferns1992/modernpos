@@ -10,15 +10,19 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = process.env.DATABASE_PATH || "pos.db";
+export const app = express();
+app.use(express.json());
+
+const dbPath = process.env.DATABASE_PATH || (process.env.VERCEL ? "/tmp/pos.db" : "pos.db");
 let db: Database.Database;
 try {
   console.log(`Opening database at ${dbPath}`);
   // Ensure directory exists if it's an absolute path
   if (path.isAbsolute(dbPath)) {
     const dbDir = path.dirname(dbPath);
-    // We can't easily use fs here without importing it, but better-sqlite3 might handle it or throw.
-    // Let's just try to open it.
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
   }
   db = new Database(dbPath);
 } catch (err) {
@@ -265,10 +269,7 @@ function hashPassword(password: string): string {
 }
 
 async function startServer() {
-  const app = express();
   const PORT = Number(process.env.PORT) || 4000;
-
-  app.use(express.json());
 
   // Add username to edit_logs if it doesn't exist
   try {
@@ -278,7 +279,7 @@ async function startServer() {
   }
 
   // Multer setup for image uploads
-  const uploadDir = path.join(process.cwd(), 'uploads');
+  const uploadDir = process.env.VERCEL ? '/tmp/uploads' : path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
@@ -1102,31 +1103,35 @@ async function startServer() {
           logEdit('settings', 0, 'UPDATE', `Settings updated: ${changes.join(', ')}`, getUsername(req));
         }
       });
-      updateSettings();
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error updating settings:", error);
-      res.status(500).json({ error: "Failed to update settings" });
-    }
+  updateSettings();
+  res.json({ success: true });
+} catch (error) {
+  console.error("Error updating settings:", error);
+  res.status(500).json({ error: "Failed to update settings" });
+}
+});
+
+// Vite middleware for development
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
   });
+  app.use(vite.middlewares);
+} else {
+  app.use(express.static(path.join(__dirname, "dist")));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  });
+}
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
-  }
-
+if (!process.env.VERCEL) {
+  const PORT = Number(process.env.PORT) || 4000;
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
 startServer();
+
+export default app;
