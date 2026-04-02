@@ -1,13 +1,15 @@
+version: '3'
 services:
   modern-pos:
     build: .
-    image: modern-pos
     ports:
-      - "4000:4000"
+      - 4000:4000
     environment:
-      - NODE_ENV=production
-      - DATABASE_PATH=/data/pos.db
+      NODE_ENV: production
+      DATABASE_PATH: /data/pos.db
     restart: unless-stopped
+    volumes:
+      - data:/data
 
 volumes:
   data:
