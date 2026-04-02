@@ -1,9 +1,6 @@
-version: "3.8"
-
 services:
   modern-pos:
     build: .
-    image: modern-pos:latest
     ports:
       - "4000:4000"
     environment:
