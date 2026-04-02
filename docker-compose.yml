@@ -1,14 +1,9 @@
 services:
   modern-pos:
-    image: node:22-alpine
+    image: nginx:alpine
     container_name: modern-pos
     ports:
-      - "4000:4000"
+      - "4000:80"
     volumes:
-      - ./data:/data
-    environment:
-      - NODE_ENV=production
-      - DATABASE_PATH=/data/pos.db
-    command: >
-      sh -c "npm install -g serve && serve -s dist -p 4000"
+      - ./dist:/usr/share/nginx/html:ro
     restart: unless-stopped
