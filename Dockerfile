@@ -2,20 +2,17 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Install build dependencies for native modules (better-sqlite3)
-RUN apk add --no-cache python3 make g++
+# Install build dependencies for native modules (better-sqlite3) and git
+RUN apk add --no-cache python3 make g++ git
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (including devDependencies for tsx and build tools)
+# Install dependencies
 RUN npm install
 
 # Copy source code
 COPY . .
-
-# Build the frontend
-RUN npm run build
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -24,10 +21,9 @@ ENV DATABASE_PATH=/data/pos.db
 
 # Create data directory for persistent storage
 RUN mkdir -p /data
-VOLUME /data
 
 # Expose the port
 EXPOSE 4000
 
-# Start the application
+# Start the application using tsx directly
 CMD ["npx", "tsx", "server.ts"]
