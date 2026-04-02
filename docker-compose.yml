@@ -1,7 +1,6 @@
 version: '3'
 services:
   modern-pos:
-    image: modern-pos:latest
     build: .
     ports:
       - "4000:4000"
