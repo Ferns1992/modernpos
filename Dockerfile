@@ -11,6 +11,9 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
+# Install tsx globally
+RUN npm install -g tsx
+
 # Copy source code
 COPY . .
 
@@ -26,4 +29,4 @@ RUN mkdir -p /data
 EXPOSE 4000
 
 # Start the application using tsx directly
-CMD ["npx", "tsx", "server.ts"]
+CMD ["tsx", "server.ts"]
